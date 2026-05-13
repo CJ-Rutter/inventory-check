@@ -299,7 +299,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -320,7 +320,8 @@ const SORT_OPTIONS = {
     ["default",  "Sort: default (CSV order)"],
     ["id",       "Sort: Asset ID (A→Z)"],
     ["cat",      "Sort: Cat Class (A→Z)"],
-    ["status",   "Sort: Inventory Status"],
+    ["status",   "Sort: Status (yard order)"],
+    ["statusAZ", "Sort: Status (A→Z)"],
   ],
   bulk: [
     ["default",  "Sort: default (CSV order)"],
@@ -579,22 +580,48 @@ function visibleRows() {
   return sortRows(filtered, kind, cols);
 }
 
+const STATUS_PRIORITY = [
+  "ready to rent",
+  "needs inspection",
+  "pending return",
+  "hard down",
+  "soft down",
+  "assigned",
+  "on rent",
+];
+function statusRank(s) {
+  const n = String(s ?? "").trim().toLowerCase();
+  if (!n) return 999;
+  const i = STATUS_PRIORITY.indexOf(n);
+  return i === -1 ? 99 : i;
+}
+
 function sortRows(rows, kind, cols) {
   const mode = state.sort[kind] || "default";
   if (mode === "default") return rows;
+  const cmp = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
+
+  if (kind === "assets" && mode === "status") {
+    return rows.slice().sort((a, b) => {
+      const ra = statusRank(a[cols.src]);
+      const rb = statusRank(b[cols.src]);
+      if (ra !== rb) return ra - rb;
+      return cmp(String(a[cols.id] ?? ""), String(b[cols.id] ?? ""));
+    });
+  }
+
   const keyFn = (r) => {
     if (kind === "assets") {
-      if (mode === "id")     return String(r[cols.id]  ?? "");
-      if (mode === "cat")    return String(r[cols.cat] ?? "");
-      if (mode === "status") return String(r[cols.src] ?? "");
+      if (mode === "id")       return String(r[cols.id]  ?? "");
+      if (mode === "cat")      return String(r[cols.cat] ?? "");
+      if (mode === "statusAZ") return String(r[cols.src] ?? "");
     } else {
-      if (mode === "bin")    return String(r[cols.bin] ?? "");
-      if (mode === "id")     return String(r[cols.id]  ?? "");
-      if (mode === "mfr")    return String(r[cols.mfr] ?? "");
+      if (mode === "bin")      return String(r[cols.bin] ?? "");
+      if (mode === "id")       return String(r[cols.id]  ?? "");
+      if (mode === "mfr")      return String(r[cols.mfr] ?? "");
     }
     return "";
   };
-  const cmp = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
   return rows.slice().sort((a, b) => {
     const ka = keyFn(a), kb = keyFn(b);
     if (!ka && kb) return 1;
