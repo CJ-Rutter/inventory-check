@@ -137,6 +137,19 @@
   }
   .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
   .tab .count { font-weight: 400; opacity: .85; margin-left: 6px; font-size: 12px; }
+  .toolrow {
+    display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; align-items: center;
+  }
+  .toolrow select { padding: 10px; }
+  .toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--chip); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 999px; font-size: 13px; cursor: pointer;
+    user-select: none; white-space: nowrap;
+  }
+  .toggle.on { background: var(--accent); color: white; border-color: var(--accent); }
+  .badge.rent { background: rgba(79,140,255,.18); color: var(--accent); border: 1px solid rgba(79,140,255,.45); }
+  .status-line { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .count-row {
     display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
     margin-top: 10px;
@@ -175,6 +188,12 @@
   </div>
   <div class="row" style="margin-top:8px">
     <input type="search" id="search" placeholder="Search asset #, part #, bin, description…" autocomplete="off" />
+  </div>
+  <div class="toolrow">
+    <select id="sortSel" aria-label="Sort"></select>
+    <div id="hideZeroToggle" class="toggle" style="display:none">
+      <span id="hideZeroLabel">Hide 0 qty</span>
+    </div>
   </div>
 </header>
 
@@ -280,7 +299,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -288,10 +307,27 @@ const state = {
   active: "assets",                 // "assets" | "bulk"
   search: "",
   filter: { assets: "all", bulk: "all" },
+  sort:   { assets: "default", bulk: "default" },
+  hideZero: false,                  // bulk only
   tabs: {
     assets: { headers: [], rows: [], fileName: "", cols: {} },
     bulk:   { headers: [], rows: [], fileName: "", cols: {} },
   },
+};
+
+const SORT_OPTIONS = {
+  assets: [
+    ["default",  "Sort: default (CSV order)"],
+    ["id",       "Sort: Asset ID (A→Z)"],
+    ["cat",      "Sort: Cat Class (A→Z)"],
+    ["status",   "Sort: Inventory Status"],
+  ],
+  bulk: [
+    ["default",  "Sort: default (CSV order)"],
+    ["bin",      "Sort: Bin Location (A→Z)"],
+    ["id",       "Sort: Part # (A→Z)"],
+    ["mfr",      "Sort: MFR (A→Z)"],
+  ],
 };
 
 // ---------- CSV parsing/serializing ----------
@@ -347,25 +383,39 @@ function findCol(headers, candidates) {
 }
 function detectAssetsCols(headers) {
   return {
-    id:    findCol(headers, ["Asset ID", "Asset #", "AssetNumber", "Asset", "Unit #"]),
-    cat:   findCol(headers, ["Equipment Class", "Cat Class", "Category", "Class"]),
-    make:  findCol(headers, ["Make"]),
-    model: findCol(headers, ["Model"]),
-    ser:   findCol(headers, ["Serial # or VIN", "Serial #", "Serial", "VIN"]),
-    desc:  findCol(headers, ["Description"]),
-    src:   findCol(headers, ["Inventory Status", "Status"]),
+    id:      findCol(headers, ["Asset ID", "Asset #", "AssetNumber", "Asset", "Unit #"]),
+    cat:     findCol(headers, ["Equipment Class", "Cat Class", "Category", "Class"]),
+    make:    findCol(headers, ["Make"]),
+    model:   findCol(headers, ["Model"]),
+    ser:     findCol(headers, ["Serial # or VIN", "Serial #", "Serial", "VIN"]),
+    desc:    findCol(headers, ["Description"]),
+    src:     findCol(headers, ["Inventory Status", "Status"]),
+    lastOff: findCol(headers, ["Last Off Rent Date", "Off Rent Date"]),
   };
 }
 function detectBulkCols(headers) {
   return {
-    id:    findCol(headers, ["PART #", "Part #", "Part Number", "PART#", "Part"]),
-    bin:   findCol(headers, ["BIN LOCATION", "Bin Location", "Bin", "Location"]),
-    mfr:   findCol(headers, ["MFR", "Manufacturer", "Make"]),
-    desc:  findCol(headers, ["ITEM DESCRIPTION", "Description"]),
-    note:  findCol(headers, ["NOTE", "Notes"]),
-    avail: findCol(headers, ["AVAILABLE QTY", "Available Qty", "Available"]),
-    total: findCol(headers, ["TOTAL QTY OWNED", "Total Qty", "Total"]),
+    id:     findCol(headers, ["PART #", "Part #", "Part Number", "PART#", "Part"]),
+    bin:    findCol(headers, ["BIN LOCATION", "Bin Location", "Bin", "Location"]),
+    mfr:    findCol(headers, ["MFR", "Manufacturer", "Make"]),
+    desc:   findCol(headers, ["ITEM DESCRIPTION", "Description"]),
+    note:   findCol(headers, ["NOTE", "Notes"]),
+    avail:  findCol(headers, ["AVAILABLE QTY", "Available Qty", "Available"]),
+    total:  findCol(headers, ["TOTAL QTY OWNED", "Total Qty", "Total"]),
+    onRent: findCol(headers, ["ON RENT QTY", "On Rent Qty", "On Rent"]),
+    alloc:  findCol(headers, ["ALLOCATED QTY", "Allocated Qty", "Allocated"]),
   };
+}
+
+function isOnRent(r, kind, cols) {
+  if (kind === "assets") {
+    const status = String(r[cols.src] ?? "").trim().toLowerCase();
+    if (status === "assigned" || status === "on rent" || status === "pending return") return true;
+    const off = String(r[cols.lastOff] ?? "").trim();
+    if (off.startsWith("9999")) return true;
+    return false;
+  }
+  return Number(r[cols.onRent] ?? 0) > 0;
 }
 function classifyCSV(headers) {
   const a = detectAssetsCols(headers);
@@ -382,6 +432,8 @@ function save() {
   const payload = {
     active: state.active,
     filter: state.filter,
+    sort: state.sort,
+    hideZero: state.hideZero,
     tabs: {},
   };
   for (const t of ["assets","bulk"]) {
@@ -409,6 +461,8 @@ function load() {
     if (!p?.tabs) return false;
     state.active = p.active || "assets";
     state.filter = p.filter || { assets: "all", bulk: "all" };
+    state.sort = p.sort || { assets: "default", bulk: "default" };
+    state.hideZero = !!p.hideZero;
     for (const t of ["assets","bulk"]) {
       const tp = p.tabs[t] || { headers: [], rows: [], fileName: "" };
       state.tabs[t].headers = tp.headers || [];
@@ -500,20 +554,52 @@ function visibleRows() {
   const cols = tab.cols;
   const f = state.filter[kind] || "all";
   const q = state.search.trim().toLowerCase();
-  return tab.rows.filter(r => {
+  const filtered = tab.rows.filter(r => {
+    if (kind === "bulk" && state.hideZero) {
+      const total = Number(r[cols.total] ?? 0) || 0;
+      const avail = Number(r[cols.avail] ?? 0) || 0;
+      const onR   = Number(r[cols.onRent] ?? 0) || 0;
+      if ((total + avail + onR) === 0) return false;
+    }
     const s = effectiveStatus(r, kind, cols);
-    if (f === "ok"   && s !== "ok")   return false;
-    if (f === "bad"  && s !== "bad")  return false;
-    if (f === "warn" && s !== "warn") return false;
-    if (f === "unchecked" && s)       return false;
+    if (f === "ok"     && s !== "ok")            return false;
+    if (f === "bad"    && s !== "bad")           return false;
+    if (f === "warn"   && s !== "warn")          return false;
+    if (f === "unchecked" && s)                  return false;
+    if (f === "onrent" && !isOnRent(r, kind, cols)) return false;
     if (!q) return true;
     let fields;
     if (kind === "assets") {
-      fields = [r[cols.id], r[cols.cat], r[cols.make], r[cols.model], r[cols.ser], r[cols.desc]];
+      fields = [r[cols.id], r[cols.cat], r[cols.make], r[cols.model], r[cols.ser], r[cols.desc], r[cols.src]];
     } else {
       fields = [r[cols.id], r[cols.bin], r[cols.mfr], r[cols.desc]];
     }
     return fields.map(v => String(v ?? "").toLowerCase()).join(" ").includes(q);
+  });
+  return sortRows(filtered, kind, cols);
+}
+
+function sortRows(rows, kind, cols) {
+  const mode = state.sort[kind] || "default";
+  if (mode === "default") return rows;
+  const keyFn = (r) => {
+    if (kind === "assets") {
+      if (mode === "id")     return String(r[cols.id]  ?? "");
+      if (mode === "cat")    return String(r[cols.cat] ?? "");
+      if (mode === "status") return String(r[cols.src] ?? "");
+    } else {
+      if (mode === "bin")    return String(r[cols.bin] ?? "");
+      if (mode === "id")     return String(r[cols.id]  ?? "");
+      if (mode === "mfr")    return String(r[cols.mfr] ?? "");
+    }
+    return "";
+  };
+  const cmp = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
+  return rows.slice().sort((a, b) => {
+    const ka = keyFn(a), kb = keyFn(b);
+    if (!ka && kb) return 1;
+    if (ka && !kb) return -1;
+    return cmp(ka, kb);
   });
 }
 
@@ -526,11 +612,28 @@ function renderFilters() {
     ["ok", isBulk ? "Match" : "Accounted"],
     ["bad", isBulk ? "Short" : "Missing"],
     ["warn", isBulk ? "Over" : "Damaged"],
+    ["onrent", "On Rent"],
   ];
   const active = state.filter[kind] || "all";
   $("#filters").innerHTML = opts.map(([f,label]) =>
     `<div class="chip ${f===active?"active":""}" data-f="${f}">${label}</div>`
   ).join("");
+}
+
+function renderToolrow() {
+  const kind = state.active;
+  const sel = $("#sortSel");
+  sel.innerHTML = SORT_OPTIONS[kind].map(([v, label]) =>
+    `<option value="${v}"${state.sort[kind]===v?" selected":""}>${label}</option>`
+  ).join("");
+  const t = $("#hideZeroToggle");
+  if (kind === "bulk") {
+    t.style.display = "";
+    t.classList.toggle("on", !!state.hideZero);
+    $("#hideZeroLabel").textContent = state.hideZero ? "Hiding 0 qty" : "Hide 0 qty";
+  } else {
+    t.style.display = "none";
+  }
 }
 
 function renderStats() {
@@ -578,6 +681,7 @@ function render() {
 
   renderStats();
   renderFilters();
+  renderToolrow();
 
   const list = $("#list");
   if (!tab.rows.length) {
@@ -598,12 +702,15 @@ function renderAssetCard(r, cols) {
   const make = String(r[cols.make] ?? "");
   const model = String(r[cols.model] ?? "");
   const ser = String(r[cols.ser] ?? "");
+  const invStatus = String(r[cols.src] ?? "");
+  const rentBadge = isOnRent(r, "assets", cols) ? `<span class="badge rent">On Rent</span>` : "";
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.id = id;
   card.innerHTML = `
-    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(r._status, false)}</div>
+    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(r._status, false)}${rentBadge}</div>
     <div class="catclass">${escapeHtml(cat) || "—"}</div>
+    ${invStatus ? `<div class="status-line">Status: ${escapeHtml(invStatus)}</div>` : ""}
     <div class="meta">
       ${[make, model].filter(Boolean).map(escapeHtml).join(" · ")}
       ${ser ? `<div>SN: ${escapeHtml(ser)}</div>` : ""}
@@ -632,16 +739,21 @@ function renderBulkCard(r, cols) {
   const desc = String(r[cols.desc] ?? "");
   const orig = String(r[cols.note] ?? "");
   const expected = String(r[cols.avail] ?? "");
+  const onRentQty = Number(r[cols.onRent] ?? 0) || 0;
+  const allocQty = Number(r[cols.alloc] ?? 0) || 0;
+  const totalQty = Number(r[cols.total] ?? 0) || 0;
   const status = effectiveStatus(r, "bulk", cols);
+  const rentBadge = onRentQty > 0 ? `<span class="badge rent">On Rent: ${onRentQty}</span>` : "";
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.id = id;
   card.innerHTML = `
-    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(status, true)}</div>
+    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(status, true)}${rentBadge}</div>
     ${bin ? `<div><span class="bin">${escapeHtml(bin)}</span></div>` : `<div class="muted" style="margin-top:6px">No bin location</div>`}
     <div class="catclass">${escapeHtml(desc) || "—"}</div>
     <div class="meta">
       ${mfr ? escapeHtml(mfr) : ""}
+      <div>Total owned: ${totalQty}${allocQty>0?` · Allocated: ${allocQty}`:""}${onRentQty>0?` · On rent: ${onRentQty}`:""}</div>
       ${orig ? `<div>${escapeHtml(orig)}</div>` : ""}
     </div>
     <div class="count-row">
@@ -699,6 +811,14 @@ document.querySelectorAll(".tab").forEach(el => el.addEventListener("click", () 
   state.active = el.dataset.tab; state.search = ""; $("#search").value = "";
   save(); render();
 }));
+$("#sortSel").addEventListener("change", (e) => {
+  state.sort[state.active] = e.target.value;
+  save(); render();
+});
+$("#hideZeroToggle").addEventListener("click", () => {
+  state.hideZero = !state.hideZero;
+  save(); render();
+});
 
 $("#btnAccountAll").addEventListener("click", () => {
   for (const r of visibleRows()) if (!r._status && !(state.active==="bulk" && r._counted!=="")) r._status = "ok";
