@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b1220" />
+<title>Inventory Check</title>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #131c30;
+    --panel-2: #1b2741;
+    --text: #e8ecf4;
+    --muted: #9aa6bd;
+    --border: #283454;
+    --accent: #4f8cff;
+    --ok: #1f9d55;
+    --ok-2: #0f7a3f;
+    --bad: #d94a4a;
+    --bad-2: #a02b2b;
+    --warn: #d99021;
+    --warn-2: #a76a14;
+    --chip: #243151;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f6fb;
+      --panel: #ffffff;
+      --panel-2: #f0f3fa;
+      --text: #0d1733;
+      --muted: #51607e;
+      --border: #d9dfee;
+      --chip: #e6ecf8;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  body { padding-bottom: env(safe-area-inset-bottom); }
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 10px 12px calc(10px + env(safe-area-inset-top)) 12px;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .title { font-weight: 700; font-size: 16px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .grow { flex: 1 1 auto; }
+  button, .btn {
+    appearance: none; border: 1px solid var(--border); background: var(--panel-2);
+    color: var(--text); border-radius: 10px; padding: 10px 12px; font: inherit;
+    cursor: pointer; min-height: 40px;
+  }
+  button:active { transform: translateY(1px); }
+  .btn-accent { background: var(--accent); border-color: var(--accent); color: white; }
+  .btn-ghost  { background: transparent; }
+  input[type="search"], input[type="text"], textarea, input[type="email"], input[type="number"], select {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+    font: inherit;
+  }
+  input[type="file"] { color: var(--muted); }
+  main { padding: 12px; max-width: 900px; margin: 0 auto; }
+  .empty {
+    border: 1px dashed var(--border); border-radius: 14px; padding: 18px; text-align: center;
+    background: var(--panel);
+  }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 12px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 8px 10px; text-align: center;
+  }
+  .stat .n { font-weight: 800; font-size: 16px; }
+  .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 12px; }
+  .chip {
+    background: var(--chip); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 999px; font-size: 13px; cursor: pointer;
+  }
+  .chip.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .list { display: flex; flex-direction: column; gap: 10px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 12px;
+  }
+  .asset-id {
+    font-weight: 800; font-size: 28px; letter-spacing: .5px;
+    font-variant-numeric: tabular-nums; word-break: break-all;
+  }
+  .catclass { color: var(--muted); font-size: 14px; margin-top: 2px; word-break: break-word; }
+  .bin {
+    display: inline-block; background: var(--chip); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 10px; border-radius: 8px; font-weight: 700;
+    font-size: 14px; margin-top: 6px;
+  }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 6px; word-break: break-word; }
+  .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+  .actions button { font-weight: 600; }
+  .b-ok { background: var(--ok); border-color: var(--ok-2); color: white; }
+  .b-bad { background: var(--bad); border-color: var(--bad-2); color: white; }
+  .b-warn { background: var(--warn); border-color: var(--warn-2); color: white; }
+  .b-ok.dim, .b-bad.dim, .b-warn.dim { opacity: .35; }
+  .note { margin-top: 8px; }
+  .note textarea { min-height: 44px; resize: vertical; }
+  .badge {
+    display: inline-block; padding: 3px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    margin-left: 8px; vertical-align: middle;
+  }
+  .badge.ok   { background: rgba(31,157,85,.15);  color: var(--ok); border: 1px solid rgba(31,157,85,.35); }
+  .badge.bad  { background: rgba(217,74,74,.15);  color: var(--bad); border: 1px solid rgba(217,74,74,.35); }
+  .badge.warn { background: rgba(217,144,33,.15); color: var(--warn); border: 1px solid rgba(217,144,33,.35); }
+  .toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .toolbar.three { grid-template-columns: 1fr 1fr 1fr; }
+  details.help { margin-top: 12px; }
+  details.help summary { cursor: pointer; color: var(--muted); }
+  .modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none;
+    align-items: center; justify-content: center; padding: 16px; z-index: 100;
+  }
+  .modal.show { display: flex; }
+  .modal .box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 14px; width: 100%; max-width: 480px;
+  }
+  .modal h3 { margin: 0 0 8px; }
+  .small { font-size: 12px; color: var(--muted); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .tabs {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    margin-top: 10px;
+  }
+  .tab {
+    text-align: center; padding: 10px 8px; border-radius: 10px;
+    background: var(--panel-2); border: 1px solid var(--border); cursor: pointer;
+    font-weight: 600;
+  }
+  .tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .tab .count { font-weight: 400; opacity: .85; margin-left: 6px; font-size: 12px; }
+  .count-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;
+    margin-top: 10px;
+  }
+  .count-row label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .count-row .big { font-weight: 800; font-size: 20px; padding-top: 8px; }
+  .count-row input[type=number] { padding: 14px 12px; font-size: 18px; font-weight: 700; text-align: center; }
+  footer {
+    text-align: center; padding: 18px 12px 24px;
+    color: var(--muted); font-size: 12px; border-top: 1px solid var(--border);
+    margin-top: 18px;
+  }
+  footer .ver { opacity: .8; font-variant-numeric: tabular-nums; }
+  @media (min-width: 640px) {
+    .stats { grid-template-columns: repeat(4, 1fr); }
+    .asset-id { font-size: 32px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <div>
+      <div class="title">Inventory Check</div>
+      <div class="muted" id="sessionLabel">No file loaded</div>
+    </div>
+    <div class="grow"></div>
+    <button class="btn-ghost" id="btnLoad">Load CSV</button>
+    <button class="btn-ghost" id="btnExport">Export</button>
+    <button class="btn-ghost" id="btnFeedback" title="Send feedback to CJ">Feedback</button>
+    <button class="btn-ghost" id="btnReset" title="Clear all check marks">Reset</button>
+  </div>
+  <div class="tabs">
+    <div class="tab active" data-tab="assets">Assets <span class="count" id="tabCountA">0</span></div>
+    <div class="tab" data-tab="bulk">Bulk Inventory <span class="count" id="tabCountB">0</span></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input type="search" id="search" placeholder="Search asset #, part #, bin, description…" autocomplete="off" />
+  </div>
+</header>
+
+<main>
+  <div id="empty" class="empty">
+    <p style="margin:.2em 0 1em">Load your inventory CSV to begin. The app auto-detects assets vs bulk by columns.</p>
+    <input type="file" id="file" accept=".csv,text/csv" />
+    <p class="hint">
+      <b>Assets</b> CSV: expects <b>Asset ID</b> + <b>Equipment Class</b>.<br>
+      <b>Bulk</b> CSV: expects <b>PART #</b> + <b>BIN LOCATION</b>.<br>
+      Loading a second file adds it to the other tab.
+    </p>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="stats" id="stats"></div>
+    <div class="filters" id="filters"></div>
+    <div id="list" class="list"></div>
+    <div class="toolbar three">
+      <button id="btnAccountAll" class="btn-ghost">Mark visible OK</button>
+      <button id="btnUncheckAll" class="btn-ghost">Clear visible</button>
+      <button id="btnJump" class="btn-ghost">Jump to next unchecked</button>
+    </div>
+    <details class="help">
+      <summary>Notes</summary>
+      <div class="small" style="margin-top:8px">
+        Progress is auto-saved per tab in this browser. Export when finished to share or archive.
+        Reloading a CSV of the same type replaces that tab but carries over status by Asset ID / Part #.
+      </div>
+    </details>
+  </div>
+</main>
+
+<div class="modal" id="exportModal">
+  <div class="box">
+    <h3>Export</h3>
+    <p class="small">Choose source and scope.</p>
+    <div class="row" style="margin:8px 0; display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+      <select id="expTab">
+        <option value="active">Active tab</option>
+        <option value="assets">Assets</option>
+        <option value="bulk">Bulk</option>
+        <option value="both">Both (two files)</option>
+      </select>
+      <select id="expScope">
+        <option value="all">All items (with status)</option>
+        <option value="checked">Checked only</option>
+        <option value="missing">Missing / Short only</option>
+        <option value="damaged">Damaged / Over only</option>
+        <option value="exceptions">Exceptions (missing + damaged + short + over)</option>
+        <option value="unchecked">Unchecked only</option>
+      </select>
+    </div>
+    <div class="toolbar">
+      <button id="expDownload" class="btn-accent">Download CSV</button>
+      <button id="expEmail">Email…</button>
+    </div>
+    <div id="emailRow" style="display:none; margin-top:10px">
+      <input type="email" id="emailTo" placeholder="recipient@example.com (optional)" />
+      <div class="hint">Opens your mail app with a summary in the body. Attach the downloaded CSV manually if needed (mobile mail can't attach from a webpage).</div>
+      <div class="toolbar" style="margin-top:8px">
+        <button id="emailGo" class="btn-accent">Open Email</button>
+        <button id="emailCancel" class="btn-ghost">Back</button>
+      </div>
+    </div>
+    <div class="toolbar" style="margin-top:10px">
+      <button id="expClose" class="btn-ghost">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="feedbackModal">
+  <div class="box">
+    <h3>Send Feedback</h3>
+    <p class="small">Your message will open your mail app addressed to cj.rutter@equipmentshare.com.</p>
+    <textarea id="fbBody" rows="6" placeholder="What worked, what didn't, what's missing?"></textarea>
+    <div class="hint" id="fbHint">Tip: include the device/browser you're using.</div>
+    <div class="toolbar" style="margin-top:10px">
+      <button id="fbSend" class="btn-accent">Open Email</button>
+      <button id="fbCancel" class="btn-ghost">Cancel</button>
+    </div>
+    <div class="toolbar" style="margin-top:8px">
+      <button id="fbCopy" class="btn-ghost">Copy to clipboard instead</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Created by CJ Rutter · <span class="ver" id="footerVer">v1.0.0</span>
+</footer>
+
+<div class="modal" id="confirmModal">
+  <div class="box">
+    <h3 id="confirmTitle">Are you sure?</h3>
+    <p id="confirmBody" class="small"></p>
+    <div class="toolbar">
+      <button id="confirmYes" class="b-bad">Yes</button>
+      <button id="confirmNo" class="btn-ghost">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const APP_VERSION = "1.0.0";
+const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
+const LS_KEY = "inv-check-v2";
+
+const state = {
+  active: "assets",                 // "assets" | "bulk"
+  search: "",
+  filter: { assets: "all", bulk: "all" },
+  tabs: {
+    assets: { headers: [], rows: [], fileName: "", cols: {} },
+    bulk:   { headers: [], rows: [], fileName: "", cols: {} },
+  },
+};
+
+// ---------- CSV parsing/serializing ----------
+function parseCSV(text) {
+  const rows = [];
+  let i = 0, field = "", row = [], inQ = false;
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // BOM
+  while (i < text.length) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i+1] === '"') { field += '"'; i += 2; continue; }
+        inQ = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"') { inQ = true; i++; continue; }
+    if (c === ',') { row.push(field); field = ""; i++; continue; }
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+    field += c; i++;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  while (rows.length && rows[rows.length-1].every(v => v === "")) rows.pop();
+  return rows;
+}
+function toCSV(headers, rows) {
+  const esc = (v) => {
+    if (v == null) return "";
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.map(esc).join(",")];
+  for (const r of rows) lines.push(headers.map(h => esc(r[h])).join(","));
+  return lines.join("\r\n");
+}
+
+// ---------- Column detection ----------
+const norm = s => String(s||"").toLowerCase().replace(/[^a-z0-9]/g, "");
+function findCol(headers, candidates) {
+  const H = headers.map(norm);
+  for (const cand of candidates) {
+    const n = norm(cand);
+    const idx = H.indexOf(n);
+    if (idx !== -1) return headers[idx];
+  }
+  for (const cand of candidates) {
+    const n = norm(cand);
+    const idx = H.findIndex(h => h.includes(n));
+    if (idx !== -1) return headers[idx];
+  }
+  return null;
+}
+function detectAssetsCols(headers) {
+  return {
+    id:    findCol(headers, ["Asset ID", "Asset #", "AssetNumber", "Asset", "Unit #"]),
+    cat:   findCol(headers, ["Equipment Class", "Cat Class", "Category", "Class"]),
+    make:  findCol(headers, ["Make"]),
+    model: findCol(headers, ["Model"]),
+    ser:   findCol(headers, ["Serial # or VIN", "Serial #", "Serial", "VIN"]),
+    desc:  findCol(headers, ["Description"]),
+    src:   findCol(headers, ["Inventory Status", "Status"]),
+  };
+}
+function detectBulkCols(headers) {
+  return {
+    id:    findCol(headers, ["PART #", "Part #", "Part Number", "PART#", "Part"]),
+    bin:   findCol(headers, ["BIN LOCATION", "Bin Location", "Bin", "Location"]),
+    mfr:   findCol(headers, ["MFR", "Manufacturer", "Make"]),
+    desc:  findCol(headers, ["ITEM DESCRIPTION", "Description"]),
+    note:  findCol(headers, ["NOTE", "Notes"]),
+    avail: findCol(headers, ["AVAILABLE QTY", "Available Qty", "Available"]),
+    total: findCol(headers, ["TOTAL QTY OWNED", "Total Qty", "Total"]),
+  };
+}
+function classifyCSV(headers) {
+  const a = detectAssetsCols(headers);
+  const b = detectBulkCols(headers);
+  if (a.id && a.cat) return "assets";
+  if (b.id && b.bin) return "bulk";
+  if (b.id) return "bulk";
+  if (a.id) return "assets";
+  return null;
+}
+
+// ---------- Persistence ----------
+function save() {
+  const payload = {
+    active: state.active,
+    filter: state.filter,
+    tabs: {},
+  };
+  for (const t of ["assets","bulk"]) {
+    const tab = state.tabs[t];
+    payload.tabs[t] = {
+      headers: tab.headers,
+      fileName: tab.fileName,
+      rows: tab.rows.map(r => {
+        const o = {};
+        for (const h of tab.headers) o[h] = r[h];
+        o._status = r._status || "";
+        o._note = r._note || "";
+        if (t === "bulk") o._counted = (r._counted ?? "");
+        return o;
+      }),
+    };
+  }
+  try { localStorage.setItem(LS_KEY, JSON.stringify(payload)); } catch {}
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return false;
+    const p = JSON.parse(raw);
+    if (!p?.tabs) return false;
+    state.active = p.active || "assets";
+    state.filter = p.filter || { assets: "all", bulk: "all" };
+    for (const t of ["assets","bulk"]) {
+      const tp = p.tabs[t] || { headers: [], rows: [], fileName: "" };
+      state.tabs[t].headers = tp.headers || [];
+      state.tabs[t].rows = tp.rows || [];
+      state.tabs[t].fileName = tp.fileName || "";
+      state.tabs[t].cols = t === "assets"
+        ? detectAssetsCols(state.tabs[t].headers)
+        : detectBulkCols(state.tabs[t].headers);
+    }
+    return true;
+  } catch { return false; }
+}
+
+// ---------- Load CSV ----------
+function ingestCSV(text, fileName) {
+  const grid = parseCSV(text);
+  if (!grid.length) return alert("CSV appears empty.");
+  const headers = grid[0].map((h, i) => h && h.trim() ? h.trim() : `col_${i}`);
+  const body = grid.slice(1);
+  const kind = classifyCSV(headers);
+  if (!kind) return alert("Couldn't tell if this is an Assets or Bulk CSV. Expected 'Asset ID' or 'PART #' column.");
+
+  const tab = state.tabs[kind];
+  // Preserve prior status by id
+  const prior = new Map();
+  if (tab.rows.length && tab.cols.id) {
+    for (const r of tab.rows) {
+      const k = String(r[tab.cols.id] ?? "").trim();
+      if (k) prior.set(k, { _status: r._status || "", _note: r._note || "", _counted: r._counted ?? "" });
+    }
+  }
+
+  tab.headers = headers;
+  tab.fileName = fileName || (kind === "assets" ? "assets.csv" : "bulk.csv");
+  tab.rows = body.map(arr => {
+    const o = {};
+    headers.forEach((h, i) => o[h] = arr[i] ?? "");
+    o._status = ""; o._note = "";
+    if (kind === "bulk") o._counted = "";
+    return o;
+  });
+  tab.cols = kind === "assets" ? detectAssetsCols(headers) : detectBulkCols(headers);
+
+  if (prior.size && tab.cols.id) {
+    for (const r of tab.rows) {
+      const k = String(r[tab.cols.id] ?? "").trim();
+      const p = prior.get(k);
+      if (p) { r._status = p._status; r._note = p._note; if (kind === "bulk") r._counted = p._counted; }
+    }
+  }
+
+  state.active = kind;
+  save();
+  render();
+}
+
+// ---------- Bulk status derivation ----------
+function bulkDerivedStatus(r, cols) {
+  const c = String(r._counted ?? "").trim();
+  if (r._status) return r._status;        // manual override wins
+  if (c === "") return "";
+  const counted = Number(c);
+  if (!Number.isFinite(counted)) return "";
+  const exp = Number(r[cols.avail] ?? 0) || 0;
+  if (counted === exp) return "ok";
+  if (counted <  exp)  return "bad";       // short
+  return "warn";                           // over
+}
+
+// ---------- Rendering ----------
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+function statusBadge(s, isBulk) {
+  if (s === "ok")   return `<span class="badge ok">${isBulk?"Match":"Accounted"}</span>`;
+  if (s === "bad")  return `<span class="badge bad">${isBulk?"Short":"Missing"}</span>`;
+  if (s === "warn") return `<span class="badge warn">${isBulk?"Over":"Damaged"}</span>`;
+  return "";
+}
+
+function effectiveStatus(r, kind, cols) {
+  if (kind === "bulk") return bulkDerivedStatus(r, cols);
+  return r._status || "";
+}
+
+function visibleRows() {
+  const kind = state.active;
+  const tab = state.tabs[kind];
+  const cols = tab.cols;
+  const f = state.filter[kind] || "all";
+  const q = state.search.trim().toLowerCase();
+  return tab.rows.filter(r => {
+    const s = effectiveStatus(r, kind, cols);
+    if (f === "ok"   && s !== "ok")   return false;
+    if (f === "bad"  && s !== "bad")  return false;
+    if (f === "warn" && s !== "warn") return false;
+    if (f === "unchecked" && s)       return false;
+    if (!q) return true;
+    let fields;
+    if (kind === "assets") {
+      fields = [r[cols.id], r[cols.cat], r[cols.make], r[cols.model], r[cols.ser], r[cols.desc]];
+    } else {
+      fields = [r[cols.id], r[cols.bin], r[cols.mfr], r[cols.desc]];
+    }
+    return fields.map(v => String(v ?? "").toLowerCase()).join(" ").includes(q);
+  });
+}
+
+function renderFilters() {
+  const kind = state.active;
+  const isBulk = kind === "bulk";
+  const opts = [
+    ["all", "All"],
+    ["unchecked", "Unchecked"],
+    ["ok", isBulk ? "Match" : "Accounted"],
+    ["bad", isBulk ? "Short" : "Missing"],
+    ["warn", isBulk ? "Over" : "Damaged"],
+  ];
+  const active = state.filter[kind] || "all";
+  $("#filters").innerHTML = opts.map(([f,label]) =>
+    `<div class="chip ${f===active?"active":""}" data-f="${f}">${label}</div>`
+  ).join("");
+}
+
+function renderStats() {
+  const kind = state.active;
+  const tab = state.tabs[kind];
+  const cols = tab.cols;
+  const isBulk = kind === "bulk";
+  const total = tab.rows.length;
+  let ok=0, bad=0, warn=0;
+  for (const r of tab.rows) {
+    const s = effectiveStatus(r, kind, cols);
+    if (s === "ok") ok++;
+    else if (s === "bad") bad++;
+    else if (s === "warn") warn++;
+  }
+  $("#stats").innerHTML = `
+    <div class="stat"><div class="n">${total}</div><div class="l">Total</div></div>
+    <div class="stat"><div class="n">${ok}</div><div class="l">${isBulk?"Match":"Accounted"}</div></div>
+    <div class="stat"><div class="n">${bad}</div><div class="l">${isBulk?"Short":"Missing"}</div></div>
+    <div class="stat"><div class="n">${warn}</div><div class="l">${isBulk?"Over":"Damaged"}</div></div>
+  `;
+}
+
+function renderTabCounts() {
+  $("#tabCountA").textContent = state.tabs.assets.rows.length || 0;
+  $("#tabCountB").textContent = state.tabs.bulk.rows.length || 0;
+  $$(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === state.active));
+}
+
+function render() {
+  renderTabCounts();
+  const kind = state.active;
+  const tab = state.tabs[kind];
+  if (!state.tabs.assets.rows.length && !state.tabs.bulk.rows.length) {
+    $("#empty").style.display = "";
+    $("#app").style.display = "none";
+    $("#sessionLabel").textContent = "No file loaded";
+    return;
+  }
+  $("#empty").style.display = "none";
+  $("#app").style.display = "";
+  $("#sessionLabel").textContent = tab.rows.length
+    ? `${tab.fileName} · ${tab.rows.length} items`
+    : `(no ${kind} loaded — tap Load CSV)`;
+
+  renderStats();
+  renderFilters();
+
+  const list = $("#list");
+  if (!tab.rows.length) {
+    list.innerHTML = `<div class="empty">No ${kind} loaded. Tap <b>Load CSV</b> to add one.</div>`;
+    return;
+  }
+  const vis = visibleRows();
+  if (!vis.length) { list.innerHTML = `<div class="empty">No items match.</div>`; return; }
+
+  const frag = document.createDocumentFragment();
+  for (const r of vis) frag.appendChild(kind === "assets" ? renderAssetCard(r, tab.cols) : renderBulkCard(r, tab.cols));
+  list.replaceChildren(frag);
+}
+
+function renderAssetCard(r, cols) {
+  const id = String(r[cols.id] ?? "");
+  const cat = String(r[cols.cat] ?? "");
+  const make = String(r[cols.make] ?? "");
+  const model = String(r[cols.model] ?? "");
+  const ser = String(r[cols.ser] ?? "");
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.id = id;
+  card.innerHTML = `
+    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(r._status, false)}</div>
+    <div class="catclass">${escapeHtml(cat) || "—"}</div>
+    <div class="meta">
+      ${[make, model].filter(Boolean).map(escapeHtml).join(" · ")}
+      ${ser ? `<div>SN: ${escapeHtml(ser)}</div>` : ""}
+    </div>
+    <div class="actions">
+      <button class="b-ok ${r._status && r._status!=="ok" ? "dim":""}"  data-act="ok">Accounted</button>
+      <button class="b-bad ${r._status && r._status!=="bad" ? "dim":""}" data-act="bad">Missing</button>
+      <button class="b-warn ${r._status && r._status!=="warn" ? "dim":""}" data-act="warn">Damaged</button>
+    </div>
+    <div class="note"><textarea placeholder="Note (optional)" rows="1">${escapeHtml(r._note || "")}</textarea></div>
+  `;
+  card.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-act]"); if (!b) return;
+    const next = b.dataset.act;
+    r._status = (r._status === next) ? "" : next;
+    save(); render();
+  });
+  card.querySelector("textarea").addEventListener("input", (ev) => { r._note = ev.target.value; save(); });
+  return card;
+}
+
+function renderBulkCard(r, cols) {
+  const id = String(r[cols.id] ?? "");
+  const bin = String(r[cols.bin] ?? "");
+  const mfr = String(r[cols.mfr] ?? "");
+  const desc = String(r[cols.desc] ?? "");
+  const orig = String(r[cols.note] ?? "");
+  const expected = String(r[cols.avail] ?? "");
+  const status = effectiveStatus(r, "bulk", cols);
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.id = id;
+  card.innerHTML = `
+    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(status, true)}</div>
+    ${bin ? `<div><span class="bin">${escapeHtml(bin)}</span></div>` : `<div class="muted" style="margin-top:6px">No bin location</div>`}
+    <div class="catclass">${escapeHtml(desc) || "—"}</div>
+    <div class="meta">
+      ${mfr ? escapeHtml(mfr) : ""}
+      ${orig ? `<div>${escapeHtml(orig)}</div>` : ""}
+    </div>
+    <div class="count-row">
+      <div><label>Expected (Available)</label><div class="big">${escapeHtml(expected || "0")}</div></div>
+      <div><label>Counted</label><input type="number" inputmode="numeric" value="${escapeHtml(r._counted ?? "")}" placeholder="—" /></div>
+    </div>
+    <div class="actions">
+      <button class="b-ok ${r._status && r._status!=="ok" ? "dim":""}"  data-act="ok" title="Force Match">Match</button>
+      <button class="b-bad ${r._status && r._status!=="bad" ? "dim":""}" data-act="bad" title="Force Short / Missing">Short</button>
+      <button class="b-warn ${r._status && r._status!=="warn" ? "dim":""}" data-act="warn" title="Force Over / Excess">Over</button>
+    </div>
+    <div class="note"><textarea placeholder="Note (optional)" rows="1">${escapeHtml(r._note || "")}</textarea></div>
+  `;
+  card.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-act]"); if (!b) return;
+    const next = b.dataset.act;
+    r._status = (r._status === next) ? "" : next;
+    save(); render();
+  });
+  card.querySelector('input[type=number]').addEventListener("input", (ev) => {
+    r._counted = ev.target.value;
+    r._status = ""; // clear manual override so derived status applies
+    save();
+    // soft-update badge without losing focus
+    const s = effectiveStatus(r, "bulk", cols);
+    const badgeHolder = card.querySelector(".asset-id").parentElement;
+    badgeHolder.innerHTML = `<span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(s, true)}`;
+    renderStats();
+  });
+  card.querySelector("textarea").addEventListener("input", (ev) => { r._note = ev.target.value; save(); });
+  return card;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+
+// ---------- Events ----------
+$("#file").addEventListener("change", (ev) => {
+  const f = ev.target.files?.[0]; if (!f) return;
+  const fr = new FileReader();
+  fr.onload = () => { ingestCSV(String(fr.result || ""), f.name); ev.target.value = ""; };
+  fr.readAsText(f);
+});
+$("#btnLoad").addEventListener("click", () => $("#file").click());
+$("#search").addEventListener("input", (e) => { state.search = e.target.value; render(); });
+$("#filters").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip"); if (!chip) return;
+  state.filter[state.active] = chip.dataset.f;
+  save(); render();
+});
+document.querySelectorAll(".tab").forEach(el => el.addEventListener("click", () => {
+  state.active = el.dataset.tab; state.search = ""; $("#search").value = "";
+  save(); render();
+}));
+
+$("#btnAccountAll").addEventListener("click", () => {
+  for (const r of visibleRows()) if (!r._status && !(state.active==="bulk" && r._counted!=="")) r._status = "ok";
+  save(); render();
+});
+$("#btnUncheckAll").addEventListener("click", () => {
+  confirmAction("Clear visible?", "Removes status from all visible cards (notes preserved). Bulk counted qty also cleared.", () => {
+    for (const r of visibleRows()) { r._status = ""; if (state.active==="bulk") r._counted = ""; }
+    save(); render();
+  });
+});
+$("#btnJump").addEventListener("click", () => {
+  const tab = state.tabs[state.active];
+  const cols = tab.cols;
+  const vis = visibleRows();
+  const target = vis.find(r => !effectiveStatus(r, state.active, cols))
+              || tab.rows.find(r => !effectiveStatus(r, state.active, cols));
+  if (!target) { alert("Nothing left to check."); return; }
+  const id = String(target[cols.id] ?? "");
+  state.filter[state.active] = "unchecked";
+  state.search = ""; $("#search").value = "";
+  save(); render();
+  const card = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+  if (card) {
+    card.scrollIntoView({behavior:"smooth", block:"center"});
+    card.style.outline = "2px solid var(--accent)";
+    setTimeout(() => card.style.outline = "", 1200);
+  }
+});
+
+$("#btnReset").addEventListener("click", () => {
+  confirmAction("Reset current tab?", `Clears statuses, counts, and notes for all ${state.active}. The loaded CSV stays.`, () => {
+    for (const r of state.tabs[state.active].rows) {
+      r._status = ""; r._note = "";
+      if (state.active === "bulk") r._counted = "";
+    }
+    save(); render();
+  });
+});
+
+// ---------- Export ----------
+function statusLabel(s, isBulk) {
+  if (s === "ok")   return isBulk ? "Match" : "Accounted";
+  if (s === "bad")  return isBulk ? "Short" : "Missing";
+  if (s === "warn") return isBulk ? "Over" : "Damaged";
+  return "";
+}
+function filterRowsForExport(kind, scope) {
+  const tab = state.tabs[kind];
+  const cols = tab.cols;
+  return tab.rows.filter(r => {
+    const s = effectiveStatus(r, kind, cols);
+    switch (scope) {
+      case "checked":     return !!s;
+      case "missing":     return s === "bad";
+      case "damaged":     return s === "warn";
+      case "exceptions":  return s === "bad" || s === "warn";
+      case "unchecked":   return !s;
+      default:            return true;
+    }
+  });
+}
+function buildCSVFor(kind, scope) {
+  const tab = state.tabs[kind];
+  const cols = tab.cols;
+  const extras = kind === "bulk"
+    ? ["Counted Qty", "Variance", "Check Status", "Check Note"]
+    : ["Check Status", "Check Note"];
+  const headers = tab.headers.concat(extras);
+  const rows = filterRowsForExport(kind, scope).map(r => {
+    const o = { ...r };
+    const s = effectiveStatus(r, kind, cols);
+    o["Check Status"] = statusLabel(s, kind==="bulk");
+    o["Check Note"] = r._note || "";
+    if (kind === "bulk") {
+      const c = r._counted ?? "";
+      o["Counted Qty"] = c;
+      const expN = Number(r[cols.avail] ?? 0) || 0;
+      const cn = c === "" ? "" : (Number(c) - expN);
+      o["Variance"] = cn === "" ? "" : (cn > 0 ? `+${cn}` : `${cn}`);
+    }
+    return o;
+  });
+  return toCSV(headers, rows);
+}
+function buildSummary(kind) {
+  const tab = state.tabs[kind];
+  const cols = tab.cols;
+  const isBulk = kind === "bulk";
+  let ok=0, bad=0, warn=0;
+  const bads = [], warns = [];
+  for (const r of tab.rows) {
+    const s = effectiveStatus(r, kind, cols);
+    if (s === "ok") ok++;
+    else if (s === "bad") { bad++; bads.push(r); }
+    else if (s === "warn") { warn++; warns.push(r); }
+  }
+  const lines = [];
+  lines.push(`${isBulk?"Bulk Inventory":"Assets"} — ${tab.fileName}`);
+  lines.push(`Total: ${tab.rows.length} | ${isBulk?"Match":"Accounted"}: ${ok} | ${isBulk?"Short":"Missing"}: ${bad} | ${isBulk?"Over":"Damaged"}: ${warn} | Unchecked: ${tab.rows.length - ok - bad - warn}`);
+  const fmt = (r) => {
+    const id = r[cols.id] ?? "";
+    if (isBulk) {
+      const c = r._counted ?? "";
+      const exp = r[cols.avail] ?? "";
+      const bin = r[cols.bin] ?? "";
+      return `  ${id}  @ ${bin || "—"}  exp:${exp} got:${c||"—"}${r._note?"  ["+r._note+"]":""}`;
+    }
+    return `  ${id}  —  ${r[cols.cat] || ""}${r._note?"  ["+r._note+"]":""}`;
+  };
+  if (bads.length) { lines.push(""); lines.push(`${isBulk?"SHORT":"MISSING"}:`); for (const r of bads) lines.push(fmt(r)); }
+  if (warns.length){ lines.push(""); lines.push(`${isBulk?"OVER":"DAMAGED"}:`); for (const r of warns) lines.push(fmt(r)); }
+  return lines.join("\n");
+}
+function downloadOne(kind, scope) {
+  const csv = buildCSVFor(kind, scope);
+  const stamp = new Date().toISOString().replace(/[:T]/g,"-").slice(0,16);
+  const name = `inventory-${kind}-${scope}-${stamp}.csv`;
+  const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+function resolveExportTabs() {
+  const t = $("#expTab").value;
+  if (t === "active") return [state.active];
+  if (t === "both") return ["assets","bulk"].filter(k => state.tabs[k].rows.length);
+  return [t];
+}
+function openEmail(to) {
+  const tabs = resolveExportTabs();
+  const subject = `Inventory check — ${tabs.map(t => state.tabs[t].fileName || t).join(" + ")}`;
+  const body = tabs.map(buildSummary).join("\n\n");
+  const href = `mailto:${encodeURIComponent(to||"")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = href;
+}
+
+$("#btnExport").addEventListener("click", () => {
+  if (!state.tabs.assets.rows.length && !state.tabs.bulk.rows.length) return alert("Load a CSV first.");
+  $("#exportModal").classList.add("show");
+});
+$("#expClose").addEventListener("click", () => $("#exportModal").classList.remove("show"));
+$("#expDownload").addEventListener("click", () => {
+  const tabs = resolveExportTabs();
+  const scope = $("#expScope").value;
+  for (const k of tabs) {
+    if (!state.tabs[k].rows.length) continue;
+    downloadOne(k, scope);
+  }
+});
+$("#expEmail").addEventListener("click", () => { $("#emailRow").style.display = ""; });
+$("#emailCancel").addEventListener("click", () => { $("#emailRow").style.display = "none"; });
+$("#emailGo").addEventListener("click", () => openEmail($("#emailTo").value.trim()));
+
+// ---------- Confirm modal ----------
+let confirmFn = null;
+function confirmAction(title, body, onYes) {
+  $("#confirmTitle").textContent = title;
+  $("#confirmBody").textContent = body;
+  confirmFn = onYes;
+  $("#confirmModal").classList.add("show");
+}
+$("#confirmYes").addEventListener("click", () => {
+  $("#confirmModal").classList.remove("show");
+  const fn = confirmFn; confirmFn = null; if (fn) fn();
+});
+$("#confirmNo").addEventListener("click", () => {
+  $("#confirmModal").classList.remove("show"); confirmFn = null;
+});
+
+// ---------- Feedback ----------
+$("#footerVer").textContent = `v${APP_VERSION}`;
+$("#btnFeedback").addEventListener("click", () => {
+  $("#fbBody").value = "";
+  $("#feedbackModal").classList.add("show");
+  setTimeout(() => $("#fbBody").focus(), 50);
+});
+$("#fbCancel").addEventListener("click", () => $("#feedbackModal").classList.remove("show"));
+function buildFeedbackBody() {
+  const msg = $("#fbBody").value.trim();
+  const ua = navigator.userAgent || "";
+  const counts = `Assets:${state.tabs.assets.rows.length} Bulk:${state.tabs.bulk.rows.length}`;
+  return [
+    msg || "(no message)",
+    "",
+    "---",
+    `App: Inventory Check v${APP_VERSION}`,
+    `Loaded: ${counts}`,
+    `Device: ${ua}`,
+    `Time: ${new Date().toLocaleString()}`,
+  ].join("\n");
+}
+$("#fbSend").addEventListener("click", () => {
+  const body = buildFeedbackBody();
+  const subject = `Inventory Check feedback (v${APP_VERSION})`;
+  const href = `mailto:${encodeURIComponent(FEEDBACK_EMAIL)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = href;
+  $("#feedbackModal").classList.remove("show");
+});
+$("#fbCopy").addEventListener("click", async () => {
+  const body = buildFeedbackBody();
+  try {
+    await navigator.clipboard.writeText(`To: ${FEEDBACK_EMAIL}\nSubject: Inventory Check feedback (v${APP_VERSION})\n\n${body}`);
+    $("#fbHint").textContent = "Copied — paste into an email or message.";
+    setTimeout(() => $("#fbHint").textContent = "Tip: include the device/browser you're using.", 2500);
+  } catch {
+    $("#fbHint").textContent = "Couldn't access clipboard on this device.";
+  }
+});
+
+// ---------- Boot ----------
+if (load()) render(); else render();
+</script>
+</body>
+</html>
