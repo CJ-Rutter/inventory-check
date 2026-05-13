@@ -299,7 +299,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.2";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -753,7 +753,8 @@ function renderAssetCard(r, cols) {
     const b = ev.target.closest("button[data-act]"); if (!b) return;
     const next = b.dataset.act;
     r._status = (r._status === next) ? "" : next;
-    save(); render();
+    save();
+    updateCardInPlace(card, r, "assets", cols, id);
   });
   card.querySelector("textarea").addEventListener("input", (ev) => { r._note = ev.target.value; save(); });
   return card;
@@ -798,20 +799,37 @@ function renderBulkCard(r, cols) {
     const b = ev.target.closest("button[data-act]"); if (!b) return;
     const next = b.dataset.act;
     r._status = (r._status === next) ? "" : next;
-    save(); render();
+    save();
+    updateCardInPlace(card, r, "bulk", cols, id);
   });
   card.querySelector('input[type=number]').addEventListener("input", (ev) => {
     r._counted = ev.target.value;
     r._status = ""; // clear manual override so derived status applies
     save();
-    // soft-update badge without losing focus
-    const s = effectiveStatus(r, "bulk", cols);
-    const badgeHolder = card.querySelector(".asset-id").parentElement;
-    badgeHolder.innerHTML = `<span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(s, true)}`;
-    renderStats();
+    updateCardInPlace(card, r, "bulk", cols, id);
   });
   card.querySelector("textarea").addEventListener("input", (ev) => { r._note = ev.target.value; save(); });
   return card;
+}
+
+function updateCardInPlace(card, r, kind, cols, id) {
+  const isBulk = kind === "bulk";
+  const status = isBulk ? effectiveStatus(r, "bulk", cols) : r._status;
+  const onRent = isOnRent(r, kind, cols);
+  let rentBadge = "";
+  if (onRent) {
+    rentBadge = isBulk
+      ? `<span class="badge rent">On Rent: ${Number(r[cols.onRent] ?? 0) || 0}</span>`
+      : `<span class="badge rent">On Rent</span>`;
+  }
+  const headerDiv = card.querySelector(".asset-id").parentElement;
+  headerDiv.innerHTML = `<span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(status, isBulk)}${rentBadge}`;
+  card.querySelectorAll("button[data-act]").forEach(b => {
+    const act = b.dataset.act;
+    const manual = r._status;
+    b.classList.toggle("dim", !!manual && manual !== act);
+  });
+  renderStats();
 }
 
 function escapeHtml(s) {
