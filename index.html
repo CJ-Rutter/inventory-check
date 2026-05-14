@@ -98,6 +98,18 @@
     font-size: 14px; margin-top: 6px;
   }
   .meta { color: var(--muted); font-size: 12px; margin-top: 6px; word-break: break-word; }
+  /* "Total owned: N · Allocated: M · On rent: K" — the inventory line.
+     Pulled out of the muted .meta color so it doesn't blend with the
+     description and manufacturer text on the bulk card. */
+  .totals {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 13px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1.5px;
+    margin-top: 4px;
+  }
   .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
   .actions button { font-weight: 600; }
   .b-ok { background: var(--ok); border-color: var(--ok-2); color: white; }
@@ -384,7 +396,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.2.1";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -878,7 +890,7 @@ function renderBulkCard(r, cols) {
     <div class="catclass">${escapeHtml(desc) || "—"}</div>
     <div class="meta">
       ${mfr ? escapeHtml(mfr) : ""}
-      <div>Total owned: ${totalQty}${allocQty>0?` · Allocated: ${allocQty}`:""}${onRentQty>0?` · On rent: ${onRentQty}`:""}</div>
+      <div class="totals">Total owned: ${totalQty}${allocQty>0?` · Allocated: ${allocQty}`:""}${onRentQty>0?` · On rent: ${onRentQty}`:""}</div>
       ${orig ? `<div>${escapeHtml(orig)}</div>` : ""}
     </div>
     <div class="count-row">
