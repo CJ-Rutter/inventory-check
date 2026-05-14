@@ -2,7 +2,7 @@
 
 Mobile-friendly single-page web app for running rental yard inventory checks from a phone or tablet.
 
-**Version:** v1.0.0
+**Version:** v1.2.0
 **Created by:** CJ Rutter
 
 ## What it does

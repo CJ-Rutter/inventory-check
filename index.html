@@ -171,6 +171,87 @@
     .stats { grid-template-columns: repeat(4, 1fr); }
     .asset-id { font-size: 32px; }
   }
+
+  /* Update-available banner — bottom-floating notice when a newer version
+     has shipped. Bottom-center on phones, bottom-right on wider screens.
+     Theme-aware via existing CSS variables. */
+  .update-banner {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--panel-2);
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.4;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    animation: ub-slide 0.25s ease-out;
+  }
+  @media (prefers-color-scheme: light) {
+    .update-banner { box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+  }
+  .update-banner .ub-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .update-banner .ub-new {
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .update-banner .ub-old {
+    color: var(--muted);
+  }
+  .update-banner .ub-reload {
+    flex-shrink: 0;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .update-banner .ub-reload:active {
+    transform: translateY(1px);
+  }
+  .update-banner .ub-dismiss {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    line-height: 1;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+  }
+  .update-banner .ub-dismiss:hover {
+    color: var(--text);
+  }
+  @keyframes ub-slide {
+    from { transform: translateY(14px); opacity: 0; }
+    to   { transform: translateY(0);     opacity: 1; }
+  }
+  @media (min-width: 640px) {
+    .update-banner {
+      left: auto;
+      right: 20px;
+      bottom: 20px;
+      max-width: 380px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -303,7 +384,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.1.3";
+const APP_VERSION = "1.2.0";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -672,9 +753,21 @@ function renderStats() {
   const tab = state.tabs[kind];
   const cols = tab.cols;
   const isBulk = kind === "bulk";
-  const total = tab.rows.length;
+  // When "Hide 0 qty" is on for the bulk tab, exclude rows where total/avail/
+  // on-rent are ALL zero from every stat tile. An item with 0 owned but units
+  // on rent still counts as a real, countable object — matches the visibleRows
+  // filter so the Total tile lines up with what's actually on screen.
+  const considerable = (isBulk && state.hideZero)
+    ? tab.rows.filter(r => {
+        const t = Number(r[cols.total]  ?? 0) || 0;
+        const a = Number(r[cols.avail]  ?? 0) || 0;
+        const o = Number(r[cols.onRent] ?? 0) || 0;
+        return (t + a + o) !== 0;
+      })
+    : tab.rows;
+  const total = considerable.length;
   let ok=0, bad=0, warn=0;
-  for (const r of tab.rows) {
+  for (const r of considerable) {
     const s = effectiveStatus(r, kind, cols);
     if (s === "ok") ok++;
     else if (s === "bad") bad++;
@@ -1080,6 +1173,84 @@ $("#fbCopy").addEventListener("click", async () => {
     $("#fbHint").textContent = "Couldn't access clipboard on this device.";
   }
 });
+
+// ---------- Update check ----------
+// Polls the live HTML (cache-busted) to detect when a newer version has
+// shipped. Surfaces a bottom-floating banner with Reload / dismiss.
+// Per-version dismissals stick in localStorage so the same banner doesn't
+// nag — only the next version will re-show. Silent on offline / file://.
+const UPDATE_DISMISS_KEY = "inventory-check-dismissed-update";
+let updateBannerEl = null;
+let updateCheckInFlight = false;
+
+function compareVersions(a, b) {
+  const pa = String(a).split(".").map(Number);
+  const pb = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x > y) return 1;
+    if (x < y) return -1;
+  }
+  return 0;
+}
+
+async function checkForUpdate() {
+  if (updateCheckInFlight) return;
+  if (location.protocol === "file:") return;  // local-only, no remote to poll
+  updateCheckInFlight = true;
+  try {
+    const url = location.pathname + "?_v=" + Date.now();
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return;
+    const html = await res.text();
+    // Match the APP_VERSION literal in the script source: const APP_VERSION = "1.2.3";
+    const match = html.match(/const\s+APP_VERSION\s*=\s*["'](\d+\.\d+\.\d+)["']/);
+    if (!match) return;
+    const liveVersion = match[1];
+    if (compareVersions(liveVersion, APP_VERSION) > 0) {
+      let dismissed = null;
+      try { dismissed = localStorage.getItem(UPDATE_DISMISS_KEY); } catch (e) {}
+      if (dismissed === liveVersion) return;
+      showUpdateBanner(liveVersion);
+    }
+  } catch (e) {
+    // Silent — offline / blocked / etc. We'll try again later.
+  } finally {
+    updateCheckInFlight = false;
+  }
+}
+
+function showUpdateBanner(newVersion) {
+  if (updateBannerEl) return;
+  updateBannerEl = document.createElement("div");
+  updateBannerEl.className = "update-banner";
+  updateBannerEl.setAttribute("role", "status");
+  updateBannerEl.innerHTML =
+    '<div class="ub-text">' +
+      '<span class="ub-new">v' + newVersion + '</span> available' +
+      ' <span class="ub-old">(you\'re on v' + APP_VERSION + ')</span>' +
+    '</div>' +
+    '<button class="ub-reload" type="button">Reload</button>' +
+    '<button class="ub-dismiss" type="button" aria-label="Dismiss">×</button>';
+  updateBannerEl.querySelector(".ub-reload").addEventListener("click", () => {
+    location.reload();
+  });
+  updateBannerEl.querySelector(".ub-dismiss").addEventListener("click", () => {
+    try { localStorage.setItem(UPDATE_DISMISS_KEY, newVersion); } catch (e) {}
+    if (updateBannerEl) {
+      updateBannerEl.remove();
+      updateBannerEl = null;
+    }
+  });
+  document.body.appendChild(updateBannerEl);
+}
+
+setTimeout(checkForUpdate, 60 * 1000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkForUpdate();
+});
+setInterval(checkForUpdate, 10 * 60 * 1000);
 
 // ---------- Boot ----------
 if (load()) render(); else render();
