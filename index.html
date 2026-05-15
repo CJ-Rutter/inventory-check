@@ -268,6 +268,39 @@
       max-width: 380px;
     }
   }
+
+  .fab-top {
+    position: fixed;
+    right: 16px;
+    bottom: 80px;
+    z-index: 900;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+    display: grid;
+    place-items: center;
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+  .fab-top.show {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .fab-top:active { transform: translateY(1px); }
+  @media (min-width: 640px) {
+    .fab-top { right: 20px; bottom: 88px; }
+  }
 </style>
 </head>
 <body>
@@ -392,6 +425,8 @@
   Created by CJ Rutter · <span class="ver" id="footerVer">v1.0.0</span>
 </footer>
 
+<button id="btnToTop" class="fab-top" type="button" aria-label="Jump to top" title="Jump to top">↑</button>
+
 <div class="modal" id="confirmModal">
   <div class="box">
     <h3 id="confirmTitle">Are you sure?</h3>
@@ -406,7 +441,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.4.1";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -1382,6 +1417,26 @@ $("#fbCopy").addEventListener("click", async () => {
 // Per-version dismissals stick in localStorage so the same banner doesn't
 // nag — only the next version will re-show. Silent on offline / file://.
 const UPDATE_DISMISS_KEY = "inventory-check-dismissed-update";
+// ---------- Jump to top ----------
+(() => {
+  const btn = document.getElementById("btnToTop");
+  if (!btn) return;
+  const THRESHOLD = 400;
+  let raf = 0;
+  const update = () => {
+    raf = 0;
+    btn.classList.toggle("show", window.scrollY > THRESHOLD);
+  };
+  window.addEventListener("scroll", () => {
+    if (raf) return;
+    raf = requestAnimationFrame(update);
+  }, { passive: true });
+  btn.addEventListener("click", () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+  update();
+})();
+
 let updateBannerEl = null;
 let updateCheckInFlight = false;
 
