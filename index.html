@@ -301,6 +301,50 @@
   @media (min-width: 640px) {
     .fab-top { right: 20px; bottom: 88px; }
   }
+
+  /* Add-row FAB. Bottom-left so it doesn't fight with the to-top FAB
+     (bottom-right). Always visible when a tab is active. */
+  .fab-add {
+    position: fixed;
+    left: 16px;
+    bottom: 80px;
+    z-index: 900;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: var(--ok);
+    color: #fff;
+    border: 1px solid var(--ok-2);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+    display: none;
+    place-items: center;
+    padding: 0;
+  }
+  .fab-add.show { display: grid; }
+  .fab-add:active { transform: translateY(1px); }
+  @media (min-width: 640px) {
+    .fab-add { left: 20px; bottom: 88px; }
+  }
+
+  /* "Added manually" tag on cards. Inline with the asset id row. */
+  .added-tag {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    background: rgba(31,157,85,.18);
+    color: var(--ok);
+    border: 1px solid rgba(31,157,85,.45);
+    vertical-align: middle;
+  }
 </style>
 </head>
 <body>
@@ -426,6 +470,63 @@
 </footer>
 
 <button id="btnToTop" class="fab-top" type="button" aria-label="Jump to top" title="Jump to top">↑</button>
+<button id="btnAdd" class="fab-add" type="button" aria-label="Add unlisted item" title="Add unlisted item">+</button>
+
+<div class="modal" id="addModal">
+  <div class="box">
+    <h3 id="addTitle">Add item</h3>
+    <p class="small" id="addHint">For items physically present but missing from the loaded CSV. They'll be tagged in the export so Inventory Manager can flag them.</p>
+
+    <div id="addFieldsAssets" style="display:none">
+      <div style="margin-top:8px">
+        <label class="small">Asset ID *</label>
+        <input type="text" id="addAssetId" autocomplete="off" inputmode="numeric" />
+      </div>
+      <div style="margin-top:8px">
+        <label class="small">Equipment Class</label>
+        <input type="text" id="addAssetCat" autocomplete="off" />
+      </div>
+      <div style="margin-top:8px">
+        <label class="small">Description</label>
+        <input type="text" id="addAssetDesc" autocomplete="off" />
+      </div>
+    </div>
+
+    <div id="addFieldsBulk" style="display:none">
+      <div style="margin-top:8px">
+        <label class="small">Part # *</label>
+        <input type="text" id="addPartId" autocomplete="off" />
+      </div>
+      <div style="margin-top:8px">
+        <label class="small">Bin Location</label>
+        <input type="text" id="addPartBin" autocomplete="off" />
+      </div>
+      <div style="margin-top:8px">
+        <label class="small">MFR</label>
+        <input type="text" id="addPartMfr" autocomplete="off" />
+      </div>
+      <div style="margin-top:8px">
+        <label class="small">Description</label>
+        <input type="text" id="addPartDesc" autocomplete="off" />
+      </div>
+      <div class="count-row" style="margin-top:8px">
+        <div>
+          <label class="small">Available Qty</label>
+          <input type="number" id="addPartAvail" inputmode="numeric" value="0" />
+        </div>
+        <div>
+          <label class="small">Counted Qty</label>
+          <input type="number" id="addPartCounted" inputmode="numeric" value="" placeholder="—" />
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <button id="addSave" class="btn-accent">Add</button>
+      <button id="addCancel" class="btn-ghost">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal" id="confirmModal">
   <div class="box">
@@ -441,7 +542,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.4.1";
+const APP_VERSION = "1.5.0";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -606,6 +707,7 @@ function save() {
         o._status = r._status || "";
         o._note = r._note || "";
         if (isBulkLike(t)) o._counted = (r._counted ?? "");
+        if (r._added) o._added = true;
         return o;
       }),
     };
@@ -675,6 +777,7 @@ function ingestCSV(text, fileName) {
   const checkStatusCol = findCol(headers, ["Check Status"]);
   const checkNoteCol   = findCol(headers, ["Check Note"]);
   const countedCol     = findCol(headers, ["Counted Qty"]);
+  const addedCol       = findCol(headers, ["Added Manually"]);
   const decodeStatus = (raw) => {
     const s = String(raw || "").trim().toLowerCase();
     if (s === "accounted" || s === "match") return "ok";
@@ -691,6 +794,10 @@ function ingestCSV(text, fileName) {
     o._note   = checkNoteCol ? String(o[checkNoteCol] || "") : "";
     if (kind === "bulk") {
       o._counted = countedCol ? String(o[countedCol] ?? "").trim() : "";
+    }
+    if (addedCol) {
+      const v = String(o[addedCol] ?? "").trim().toLowerCase();
+      if (v === "yes" || v === "true" || v === "1") o._added = true;
     }
     return o;
   });
@@ -986,6 +1093,7 @@ function render() {
   const frag = document.createDocumentFragment();
   for (const r of vis) frag.appendChild(kind === "assets" ? renderAssetCard(r, tab.cols) : renderBulkCard(r, tab.cols));
   list.replaceChildren(frag);
+  refreshAddFabVisibility();
 }
 
 function renderAssetCard(r, cols) {
@@ -999,8 +1107,9 @@ function renderAssetCard(r, cols) {
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.id = id;
+  const addedTag = r._added ? `<span class="added-tag">+ Added</span>` : "";
   card.innerHTML = `
-    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(r._status, false)}${rentBadge}</div>
+    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(r._status, false)}${rentBadge}${addedTag}</div>
     <div class="catclass">${escapeHtml(cat) || "—"}</div>
     ${invStatus ? `<div class="status-line">Status: ${escapeHtml(invStatus)}</div>` : ""}
     <div class="meta">
@@ -1052,8 +1161,9 @@ function renderBulkCard(r, cols) {
   const card = document.createElement("div");
   card.className = "card";
   card.dataset.id = id;
+  const addedTag = r._added ? `<span class="added-tag">+ Added</span>` : "";
   card.innerHTML = `
-    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(status, true)}${rentBadge}</div>
+    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(status, true)}${rentBadge}${addedTag}</div>
     ${bin ? `<div><span class="bin">${escapeHtml(bin)}</span></div>` : `<div class="muted" style="margin-top:6px">No bin location</div>`}
     <div class="catclass">${escapeHtml(desc) || "—"}</div>
     <div class="meta">
@@ -1100,7 +1210,8 @@ function updateCardInPlace(card, r, kind, cols, id) {
       : `<span class="badge rent">On Rent</span>`;
   }
   const headerDiv = card.querySelector(".asset-id").parentElement;
-  headerDiv.innerHTML = `<span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(status, isBulk)}${rentBadge}`;
+  const addedTag = r._added ? `<span class="added-tag">+ Added</span>` : "";
+  headerDiv.innerHTML = `<span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(status, isBulk)}${rentBadge}${addedTag}`;
   card.querySelectorAll("button[data-act]").forEach(b => {
     const act = b.dataset.act;
     const manual = r._status;
@@ -1211,14 +1322,15 @@ function buildCSVFor(kind, scope) {
   const cols = tab.cols;
   const isBulk = isBulkLike(kind);
   const extras = isBulk
-    ? ["Counted Qty", "Variance", "Check Status", "Check Note"]
-    : ["Check Status", "Check Note"];
+    ? ["Counted Qty", "Variance", "Check Status", "Check Note", "Added Manually"]
+    : ["Check Status", "Check Note", "Added Manually"];
   const headers = tab.headers.concat(extras);
   const rows = filterRowsForExport(kind, scope).map(r => {
     const o = { ...r };
     const s = effectiveStatus(r, kind, cols);
     o["Check Status"] = statusLabel(s, isBulk);
     o["Check Note"] = r._note || "";
+    o["Added Manually"] = r._added ? "Yes" : "";
     if (isBulk) {
       const c = r._counted ?? "";
       o["Counted Qty"] = c;
@@ -1509,8 +1621,106 @@ document.addEventListener("visibilitychange", () => {
 });
 setInterval(checkForUpdate, 10 * 60 * 1000);
 
+// ---------- Add unlisted item ----------
+// Default header layouts used when adding an item to an empty tab (no CSV
+// loaded yet for that kind). Matches the canonical Inventory/Bulk export
+// shape so a downstream re-import lines up cleanly.
+const DEFAULT_HEADERS = {
+  assets: ["Asset ID", "Equipment Class", "Description", "Make", "Model", "Inventory Status"],
+  parts:  ["PART #", "BIN LOCATION", "MFR", "ITEM DESCRIPTION", "AVAILABLE QTY", "TOTAL QTY OWNED", "ON RENT QTY", "ALLOCATED QTY"],
+  bulk:   ["PART #", "BIN LOCATION", "MFR", "ITEM DESCRIPTION", "AVAILABLE QTY", "TOTAL QTY OWNED", "ON RENT QTY", "ALLOCATED QTY"],
+};
+
+function ensureTabSchema(kind) {
+  const tab = state.tabs[kind];
+  if (tab.headers.length) return;
+  tab.headers = DEFAULT_HEADERS[kind].slice();
+  tab.cols = kind === "assets"
+    ? detectAssetsCols(tab.headers)
+    : detectBulkCols(tab.headers);
+  tab.fileName = tab.fileName || `${kind}-added.csv`;
+}
+
+function openAddModal() {
+  const kind = state.active;
+  $("#addFieldsAssets").style.display = kind === "assets" ? "" : "none";
+  $("#addFieldsBulk").style.display   = kind === "assets" ? "none" : "";
+  $("#addTitle").textContent = kind === "assets"
+    ? "Add unlisted asset"
+    : (kind === "parts" ? "Add unlisted part" : "Add unlisted bulk item");
+  // Reset inputs
+  ["addAssetId","addAssetCat","addAssetDesc","addPartId","addPartBin","addPartMfr","addPartDesc","addPartCounted"]
+    .forEach(id => { const el = $("#"+id); if (el) el.value = ""; });
+  $("#addPartAvail").value = "0";
+  $("#addModal").classList.add("show");
+  setTimeout(() => {
+    const focusId = kind === "assets" ? "addAssetId" : "addPartId";
+    const el = $("#"+focusId); if (el) el.focus();
+  }, 50);
+}
+
+function commitAdd() {
+  const kind = state.active;
+  ensureTabSchema(kind);
+  const tab = state.tabs[kind];
+  const cols = tab.cols;
+
+  if (kind === "assets") {
+    const id = $("#addAssetId").value.trim();
+    if (!id) { alert("Asset ID is required."); return; }
+    if (tab.rows.some(r => String(r[cols.id] ?? "").trim() === id)) {
+      if (!confirm(`Asset ${id} is already in this tab. Add another row anyway?`)) return;
+    }
+    const row = {};
+    for (const h of tab.headers) row[h] = "";
+    if (cols.id)   row[cols.id]   = id;
+    if (cols.cat)  row[cols.cat]  = $("#addAssetCat").value.trim();
+    if (cols.desc) row[cols.desc] = $("#addAssetDesc").value.trim();
+    row._status = "";
+    row._note = "";
+    row._added = true;
+    tab.rows.push(row);
+  } else {
+    const id = $("#addPartId").value.trim();
+    if (!id) { alert("Part # is required."); return; }
+    if (tab.rows.some(r => String(r[cols.id] ?? "").trim() === id)) {
+      if (!confirm(`Part ${id} is already in this tab. Add another row anyway?`)) return;
+    }
+    const avail = $("#addPartAvail").value.trim() || "0";
+    const counted = $("#addPartCounted").value.trim();
+    const row = {};
+    for (const h of tab.headers) row[h] = "";
+    if (cols.id)    row[cols.id]    = id;
+    if (cols.bin)   row[cols.bin]   = $("#addPartBin").value.trim();
+    if (cols.mfr)   row[cols.mfr]   = $("#addPartMfr").value.trim();
+    if (cols.desc)  row[cols.desc]  = $("#addPartDesc").value.trim();
+    if (cols.avail) row[cols.avail] = avail;
+    row._status = "";
+    row._note = "";
+    row._counted = counted;
+    row._added = true;
+    tab.rows.push(row);
+  }
+  $("#addModal").classList.remove("show");
+  save();
+  render();
+}
+
+function refreshAddFabVisibility() {
+  // Hide when no data is loaded (empty state); show otherwise. Always
+  // visible on whichever tab is active — the schema gets defaulted on
+  // commit if the active tab has no rows yet.
+  const anyData = ALL_TABS.some(t => state.tabs[t].rows.length);
+  $("#btnAdd").classList.toggle("show", anyData);
+}
+
+$("#btnAdd").addEventListener("click", openAddModal);
+$("#addCancel").addEventListener("click", () => $("#addModal").classList.remove("show"));
+$("#addSave").addEventListener("click", commitAdd);
+
 // ---------- Boot ----------
 if (load()) render(); else render();
+refreshAddFabVisibility();
 </script>
 </body>
 </html>
