@@ -285,7 +285,8 @@
   </div>
   <div class="tabs">
     <div class="tab active" data-tab="assets">Assets <span class="count" id="tabCountA">0</span></div>
-    <div class="tab" data-tab="bulk">Bulk Inventory <span class="count" id="tabCountB">0</span></div>
+    <div class="tab" data-tab="parts">Parts <span class="count" id="tabCountP">0</span></div>
+    <div class="tab" data-tab="bulk">Bulk <span class="count" id="tabCountB">0</span></div>
   </div>
   <div class="row" style="margin-top:8px">
     <input type="search" id="search" placeholder="Search asset #, part #, bin, description…" autocomplete="off" />
@@ -304,8 +305,9 @@
     <input type="file" id="file" accept=".csv,text/csv" />
     <p class="hint">
       <b>Assets</b> CSV: expects <b>Asset ID</b> + <b>Equipment Class</b>.<br>
-      <b>Bulk</b> CSV: expects <b>PART #</b> + <b>BIN LOCATION</b>.<br>
-      Loading a second file adds it to the other tab.
+      <b>Bulk Inventory</b> CSV: expects <b>PART #</b> + <b>BIN LOCATION</b>. Auto-split into
+      <b>Parts</b> (real manufacturer parts) and <b>Bulk</b> (pseudo-items whose MFR starts with "BULK").<br>
+      Loading a second file adds to the matching tab(s).
     </p>
   </div>
 
@@ -336,8 +338,9 @@
       <select id="expTab">
         <option value="active">Active tab</option>
         <option value="assets">Assets</option>
+        <option value="parts">Parts</option>
         <option value="bulk">Bulk</option>
-        <option value="both">Both (two files)</option>
+        <option value="all">All tabs (separate files)</option>
       </select>
       <select id="expScope">
         <option value="all">All items (with status)</option>
@@ -403,21 +406,31 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
 const state = {
-  active: "assets",                 // "assets" | "bulk"
+  active: "assets",                 // "assets" | "parts" | "bulk"
   search: "",
-  filter: { assets: "all", bulk: "all" },
-  sort:   { assets: "default", bulk: "default" },
-  hideZero: false,                  // bulk only
+  filter: { assets: "all", parts: "all", bulk: "all" },
+  sort:   { assets: "default", parts: "default", bulk: "default" },
+  hideZero: false,                  // parts + bulk only
   tabs: {
     assets: { headers: [], rows: [], fileName: "", cols: {} },
+    parts:  { headers: [], rows: [], fileName: "", cols: {} },
     bulk:   { headers: [], rows: [], fileName: "", cols: {} },
   },
 };
+
+// "parts" and "bulk" share the same column shape, card UI, and status
+// semantics — they're partitioned out of a single "Bulk Inventory" CSV by
+// whether the MFR column starts with "BULK". This helper centralizes the
+// "is this tab one of the bulk-shaped ones?" check used by renderers and
+// status logic.
+const isBulkLike = (kind) => kind === "bulk" || kind === "parts";
+const BULK_LIKE_TABS = ["parts", "bulk"];
+const ALL_TABS = ["assets", "parts", "bulk"];
 
 const SORT_OPTIONS = {
   assets: [
@@ -426,6 +439,12 @@ const SORT_OPTIONS = {
     ["cat",      "Sort: Cat Class (A→Z)"],
     ["status",   "Sort: Status (yard order)"],
     ["statusAZ", "Sort: Status (A→Z)"],
+  ],
+  parts: [
+    ["default",  "Sort: default (CSV order)"],
+    ["bin",      "Sort: Bin Location (A→Z)"],
+    ["id",       "Sort: Part # (A→Z)"],
+    ["mfr",      "Sort: MFR (A→Z)"],
   ],
   bulk: [
     ["default",  "Sort: default (CSV order)"],
@@ -541,7 +560,7 @@ function save() {
     hideZero: state.hideZero,
     tabs: {},
   };
-  for (const t of ["assets","bulk"]) {
+  for (const t of ALL_TABS) {
     const tab = state.tabs[t];
     payload.tabs[t] = {
       headers: tab.headers,
@@ -551,7 +570,7 @@ function save() {
         for (const h of tab.headers) o[h] = r[h];
         o._status = r._status || "";
         o._note = r._note || "";
-        if (t === "bulk") o._counted = (r._counted ?? "");
+        if (isBulkLike(t)) o._counted = (r._counted ?? "");
         return o;
       }),
     };
@@ -565,10 +584,12 @@ function load() {
     const p = JSON.parse(raw);
     if (!p?.tabs) return false;
     state.active = p.active || "assets";
-    state.filter = p.filter || { assets: "all", bulk: "all" };
-    state.sort = p.sort || { assets: "default", bulk: "default" };
+    // Backward-compat: older saves only had assets+bulk. New parts tab gets
+    // sensible defaults when missing; never overwrites a present value.
+    state.filter = { assets: "all", parts: "all", bulk: "all", ...(p.filter || {}) };
+    state.sort = { assets: "default", parts: "default", bulk: "default", ...(p.sort || {}) };
     state.hideZero = !!p.hideZero;
-    for (const t of ["assets","bulk"]) {
+    for (const t of ALL_TABS) {
       const tp = p.tabs[t] || { headers: [], rows: [], fileName: "" };
       state.tabs[t].headers = tp.headers || [];
       state.tabs[t].rows = tp.rows || [];
@@ -577,8 +598,31 @@ function load() {
         ? detectAssetsCols(state.tabs[t].headers)
         : detectBulkCols(state.tabs[t].headers);
     }
+    // Older saves stored all bulk-shape rows under "bulk" without partitioning.
+    // Re-split on load so the new Parts tab populates correctly without
+    // requiring the user to re-import their CSV.
+    migrateBulkIntoParts();
     return true;
   } catch { return false; }
+}
+
+// One-time migration for saves created before the Parts/Bulk split. If the
+// Parts tab is empty but the Bulk tab holds rows whose MFR doesn't start with
+// "BULK", move those to Parts. Safe to run every load — it's a no-op once
+// either Parts has data or all Bulk rows are BULK-prefixed.
+function migrateBulkIntoParts() {
+  if (state.tabs.parts.rows.length) return;
+  const bulk = state.tabs.bulk;
+  if (!bulk.rows.length || !bulk.cols.mfr) return;
+  const mfrCol = bulk.cols.mfr;
+  const isBulkRow = (r) => String(r[mfrCol] ?? "").trim().toUpperCase().startsWith("BULK");
+  const partsRows = bulk.rows.filter(r => !isBulkRow(r));
+  if (!partsRows.length) return;
+  state.tabs.parts.headers  = bulk.headers;
+  state.tabs.parts.fileName = bulk.fileName;
+  state.tabs.parts.rows     = partsRows;
+  state.tabs.parts.cols     = bulk.cols;
+  state.tabs.bulk.rows      = bulk.rows.filter(isBulkRow);
 }
 
 // ---------- Load CSV ----------
@@ -590,23 +634,12 @@ function ingestCSV(text, fileName) {
   const kind = classifyCSV(headers);
   if (!kind) return alert("Couldn't tell if this is an Assets or Bulk CSV. Expected 'Asset ID' or 'PART #' column.");
 
-  const tab = state.tabs[kind];
-  // Preserve prior status by id (when re-loading the same file in the same browser session)
-  const prior = new Map();
-  if (tab.rows.length && tab.cols.id) {
-    for (const r of tab.rows) {
-      const k = String(r[tab.cols.id] ?? "").trim();
-      if (k) prior.set(k, { _status: r._status || "", _note: r._note || "", _counted: r._counted ?? "" });
-    }
-  }
-
-  // Look for round-trip columns from a prior export. These let a coworker
-  // continue a check started elsewhere: export the in-progress CSV, hand it
-  // off, the next person imports and picks up exactly where it was left.
+  // Round-trip columns from a prior export. These let a coworker continue a
+  // check started elsewhere: export the in-progress CSV, hand it off, the
+  // next person imports and picks up exactly where it was left.
   const checkStatusCol = findCol(headers, ["Check Status"]);
   const checkNoteCol   = findCol(headers, ["Check Note"]);
   const countedCol     = findCol(headers, ["Counted Qty"]);
-  const isBulk = kind === "bulk";
   const decodeStatus = (raw) => {
     const s = String(raw || "").trim().toLowerCase();
     if (s === "accounted" || s === "match") return "ok";
@@ -615,24 +648,69 @@ function ingestCSV(text, fileName) {
     return "";
   };
 
-  tab.headers = headers;
-  tab.fileName = fileName || (kind === "assets" ? "assets.csv" : "bulk.csv");
-  tab.rows = body.map(arr => {
+  // Build the full enriched row set first, then partition for bulk-shape CSVs.
+  const enriched = body.map(arr => {
     const o = {};
     headers.forEach((h, i) => o[h] = arr[i] ?? "");
     o._status = checkStatusCol ? decodeStatus(o[checkStatusCol]) : "";
     o._note   = checkNoteCol ? String(o[checkNoteCol] || "") : "";
-    if (isBulk) {
-      // Counted Qty from a prior export wins over the resident-state import.
+    if (kind === "bulk") {
       o._counted = countedCol ? String(o[countedCol] ?? "").trim() : "";
     }
     return o;
   });
-  tab.cols = kind === "assets" ? detectAssetsCols(headers) : detectBulkCols(headers);
 
-  // Carry forward any in-browser-session prior state for rows the export
-  // didn't decide on (e.g. importing the original source after a partial
-  // session — preserves what was done before the swap).
+  if (kind === "assets") {
+    applyImport("assets", headers, enriched, fileName, detectAssetsCols(headers));
+    state.active = "assets";
+    save();
+    render();
+    return;
+  }
+
+  // Bulk-shape CSV: partition by MFR-starts-with-"BULK". BULK-prefixed rows
+  // are pseudo-items (propane, consumables) that live in the Bulk tab; the
+  // rest are real manufacturer parts and go to the Parts tab. A partial
+  // round-trip import (only one kind present) leaves the other tab alone.
+  const cols = detectBulkCols(headers);
+  const mfrCol = cols.mfr;
+  const isBulkRow = (r) =>
+    mfrCol && String(r[mfrCol] ?? "").trim().toUpperCase().startsWith("BULK");
+  const bulkRows  = enriched.filter(isBulkRow);
+  const partsRows = enriched.filter(r => !isBulkRow(r));
+
+  if (partsRows.length) applyImport("parts", headers, partsRows, fileName, cols);
+  if (bulkRows.length)  applyImport("bulk",  headers, bulkRows,  fileName, cols);
+
+  // Switch to whichever tab actually received rows. When both got data, the
+  // larger one wins; tie goes to parts (more frequent case in practice).
+  if (partsRows.length && bulkRows.length) {
+    state.active = partsRows.length >= bulkRows.length ? "parts" : "bulk";
+  } else if (partsRows.length) {
+    state.active = "parts";
+  } else if (bulkRows.length) {
+    state.active = "bulk";
+  }
+  save();
+  render();
+}
+
+// Apply a parsed/enriched row set to a tab, preserving any in-session status
+// the user had on rows whose id matches (so re-loading the same CSV mid-check
+// doesn't wipe progress).
+function applyImport(kind, headers, rows, fileName, cols) {
+  const tab = state.tabs[kind];
+  const prior = new Map();
+  if (tab.rows.length && tab.cols.id) {
+    for (const r of tab.rows) {
+      const k = String(r[tab.cols.id] ?? "").trim();
+      if (k) prior.set(k, { _status: r._status || "", _note: r._note || "", _counted: r._counted ?? "" });
+    }
+  }
+  tab.headers = headers;
+  tab.fileName = fileName || `${kind}.csv`;
+  tab.rows = rows;
+  tab.cols = cols;
   if (prior.size && tab.cols.id) {
     for (const r of tab.rows) {
       const k = String(r[tab.cols.id] ?? "").trim();
@@ -640,13 +718,9 @@ function ingestCSV(text, fileName) {
       if (!p) continue;
       if (!r._status) r._status = p._status;
       if (!r._note)   r._note   = p._note;
-      if (isBulk && r._counted === "") r._counted = p._counted;
+      if (isBulkLike(kind) && r._counted === "") r._counted = p._counted;
     }
   }
-
-  state.active = kind;
-  save();
-  render();
 }
 
 // ---------- Bulk status derivation ----------
@@ -674,7 +748,7 @@ function statusBadge(s, isBulk) {
 }
 
 function effectiveStatus(r, kind, cols) {
-  if (kind === "bulk") return bulkDerivedStatus(r, cols);
+  if (isBulkLike(kind)) return bulkDerivedStatus(r, cols);
   return r._status || "";
 }
 
@@ -685,7 +759,7 @@ function visibleRows() {
   const f = state.filter[kind] || "all";
   const q = state.search.trim().toLowerCase();
   const filtered = tab.rows.filter(r => {
-    if (kind === "bulk" && state.hideZero) {
+    if (isBulkLike(kind) && state.hideZero) {
       const total = Number(r[cols.total] ?? 0) || 0;
       const avail = Number(r[cols.avail] ?? 0) || 0;
       const onR   = Number(r[cols.onRent] ?? 0) || 0;
@@ -761,7 +835,7 @@ function sortRows(rows, kind, cols) {
 
 function renderFilters() {
   const kind = state.active;
-  const isBulk = kind === "bulk";
+  const isBulk = isBulkLike(kind);
   const opts = [
     ["all", "All"],
     ["unchecked", "Unchecked"],
@@ -783,7 +857,7 @@ function renderToolrow() {
     `<option value="${v}"${state.sort[kind]===v?" selected":""}>${label}</option>`
   ).join("");
   const t = $("#hideZeroToggle");
-  if (kind === "bulk") {
+  if (isBulkLike(kind)) {
     t.style.display = "";
     t.classList.toggle("on", !!state.hideZero);
     $("#hideZeroLabel").textContent = state.hideZero ? "Hiding 0 qty" : "Hide 0 qty";
@@ -796,11 +870,12 @@ function renderStats() {
   const kind = state.active;
   const tab = state.tabs[kind];
   const cols = tab.cols;
-  const isBulk = kind === "bulk";
-  // When "Hide 0 qty" is on for the bulk tab, exclude rows where total/avail/
-  // on-rent are ALL zero from every stat tile. An item with 0 owned but units
-  // on rent still counts as a real, countable object — matches the visibleRows
-  // filter so the Total tile lines up with what's actually on screen.
+  const isBulk = isBulkLike(kind);
+  // When "Hide 0 qty" is on for a bulk-shape tab, exclude rows where total/
+  // avail/on-rent are ALL zero from every stat tile. An item with 0 owned but
+  // units on rent still counts as a real, countable object — matches the
+  // visibleRows filter so the Total tile lines up with what's actually on
+  // screen.
   const considerable = (isBulk && state.hideZero)
     ? tab.rows.filter(r => {
         const t = Number(r[cols.total]  ?? 0) || 0;
@@ -827,10 +902,11 @@ function renderStats() {
 
 function renderTabCounts() {
   $("#tabCountA").textContent = state.tabs.assets.rows.length || 0;
+  $("#tabCountP").textContent = state.tabs.parts.rows.length || 0;
   $("#tabCountB").textContent = state.tabs.bulk.rows.length || 0;
   $$(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === state.active));
   // Mobile keyboard hint: assets are typically all-digit, so open the numeric
-  // pad. Bulk part numbers can include letters, so the text keyboard stays.
+  // pad. Parts/bulk numbers can include letters, so the text keyboard stays.
   // Users can still tap to a letter on numeric mode via long-press.
   const search = $("#search");
   if (search) {
@@ -848,7 +924,7 @@ function render() {
   renderTabCounts();
   const kind = state.active;
   const tab = state.tabs[kind];
-  if (!state.tabs.assets.rows.length && !state.tabs.bulk.rows.length) {
+  if (!ALL_TABS.some(t => state.tabs[t].rows.length)) {
     $("#empty").style.display = "";
     $("#app").style.display = "none";
     $("#sessionLabel").textContent = "No file loaded";
@@ -979,8 +1055,8 @@ function renderBulkCard(r, cols) {
 }
 
 function updateCardInPlace(card, r, kind, cols, id) {
-  const isBulk = kind === "bulk";
-  const status = isBulk ? effectiveStatus(r, "bulk", cols) : r._status;
+  const isBulk = isBulkLike(kind);
+  const status = isBulk ? effectiveStatus(r, kind, cols) : r._status;
   const onRent = isOnRent(r, kind, cols);
   let rentBadge = "";
   if (onRent) {
@@ -1032,12 +1108,14 @@ $("#hideZeroToggle").addEventListener("click", () => {
 });
 
 $("#btnAccountAll").addEventListener("click", () => {
-  for (const r of visibleRows()) if (!r._status && !(state.active==="bulk" && r._counted!=="")) r._status = "ok";
+  const bulkLike = isBulkLike(state.active);
+  for (const r of visibleRows()) if (!r._status && !(bulkLike && r._counted!=="")) r._status = "ok";
   save(); render();
 });
 $("#btnUncheckAll").addEventListener("click", () => {
-  confirmAction("Clear visible?", "Removes status from all visible cards (notes preserved). Bulk counted qty also cleared.", () => {
-    for (const r of visibleRows()) { r._status = ""; if (state.active==="bulk") r._counted = ""; }
+  confirmAction("Clear visible?", "Removes status from all visible cards (notes preserved). Counted qty also cleared on Parts/Bulk.", () => {
+    const bulkLike = isBulkLike(state.active);
+    for (const r of visibleRows()) { r._status = ""; if (bulkLike) r._counted = ""; }
     save(); render();
   });
 });
@@ -1062,9 +1140,10 @@ $("#btnJump").addEventListener("click", () => {
 
 $("#btnReset").addEventListener("click", () => {
   confirmAction("Reset current tab?", `Clears statuses, counts, and notes for all ${state.active}. The loaded CSV stays.`, () => {
+    const bulkLike = isBulkLike(state.active);
     for (const r of state.tabs[state.active].rows) {
       r._status = ""; r._note = "";
-      if (state.active === "bulk") r._counted = "";
+      if (bulkLike) r._counted = "";
     }
     save(); render();
   });
@@ -1095,16 +1174,17 @@ function filterRowsForExport(kind, scope) {
 function buildCSVFor(kind, scope) {
   const tab = state.tabs[kind];
   const cols = tab.cols;
-  const extras = kind === "bulk"
+  const isBulk = isBulkLike(kind);
+  const extras = isBulk
     ? ["Counted Qty", "Variance", "Check Status", "Check Note"]
     : ["Check Status", "Check Note"];
   const headers = tab.headers.concat(extras);
   const rows = filterRowsForExport(kind, scope).map(r => {
     const o = { ...r };
     const s = effectiveStatus(r, kind, cols);
-    o["Check Status"] = statusLabel(s, kind==="bulk");
+    o["Check Status"] = statusLabel(s, isBulk);
     o["Check Note"] = r._note || "";
-    if (kind === "bulk") {
+    if (isBulk) {
       const c = r._counted ?? "";
       o["Counted Qty"] = c;
       const expN = Number(r[cols.avail] ?? 0) || 0;
@@ -1118,7 +1198,7 @@ function buildCSVFor(kind, scope) {
 function buildSummary(kind) {
   const tab = state.tabs[kind];
   const cols = tab.cols;
-  const isBulk = kind === "bulk";
+  const isBulk = isBulkLike(kind);
   let ok=0, bad=0, warn=0;
   const bads = [], warns = [];
   for (const r of tab.rows) {
@@ -1127,8 +1207,9 @@ function buildSummary(kind) {
     else if (s === "bad") { bad++; bads.push(r); }
     else if (s === "warn") { warn++; warns.push(r); }
   }
+  const titleByKind = { assets: "Assets", parts: "Parts", bulk: "Bulk" };
   const lines = [];
-  lines.push(`${isBulk?"Bulk Inventory":"Assets"} — ${tab.fileName}`);
+  lines.push(`${titleByKind[kind] || kind} — ${tab.fileName}`);
   lines.push(`Total: ${tab.rows.length} | ${isBulk?"Match":"Accounted"}: ${ok} | ${isBulk?"Short":"Missing"}: ${bad} | ${isBulk?"Over":"Damaged"}: ${warn} | Unchecked: ${tab.rows.length - ok - bad - warn}`);
   const fmt = (r) => {
     const id = r[cols.id] ?? "";
@@ -1158,7 +1239,7 @@ function downloadOne(kind, scope) {
 function resolveExportTabs() {
   const t = $("#expTab").value;
   if (t === "active") return [state.active];
-  if (t === "both") return ["assets","bulk"].filter(k => state.tabs[k].rows.length);
+  if (t === "all" || t === "both") return ALL_TABS.filter(k => state.tabs[k].rows.length);
   return [t];
 }
 function buildExportFiles(scope) {
@@ -1222,7 +1303,7 @@ async function shareExport(to) {
 }
 
 $("#btnExport").addEventListener("click", () => {
-  if (!state.tabs.assets.rows.length && !state.tabs.bulk.rows.length) return alert("Load a CSV first.");
+  if (!ALL_TABS.some(t => state.tabs[t].rows.length)) return alert("Load a CSV first.");
   $("#exportModal").classList.add("show");
 });
 $("#expClose").addEventListener("click", () => $("#exportModal").classList.remove("show"));
@@ -1266,7 +1347,7 @@ $("#fbCancel").addEventListener("click", () => $("#feedbackModal").classList.rem
 function buildFeedbackBody() {
   const msg = $("#fbBody").value.trim();
   const ua = navigator.userAgent || "";
-  const counts = `Assets:${state.tabs.assets.rows.length} Bulk:${state.tabs.bulk.rows.length}`;
+  const counts = `Assets:${state.tabs.assets.rows.length} Parts:${state.tabs.parts.rows.length} Bulk:${state.tabs.bulk.rows.length}`;
   return [
     msg || "(no message)",
     "",

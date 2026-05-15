@@ -2,14 +2,16 @@
 
 Mobile-friendly single-page web app for running rental yard inventory checks from a phone or tablet.
 
-**Version:** v1.3.0
+**Version:** v1.4.0
 **Created by:** CJ Rutter
 
 ## What it does
 
 - Accepts two kinds of CSV input (auto-detected by columns):
   - **Assets** — keyed by Asset ID, organized by Equipment Class (cat class). Mark each Accounted / Missing / Damaged with optional note.
-  - **Bulk Inventory** — keyed by Part #, with Bin Location prominent. Enter a counted quantity and status auto-derives Match / Short / Over (or override manually).
+  - **Bulk Inventory** — keyed by Part #, with Bin Location prominent. Enter a counted quantity and status auto-derives Match / Short / Over (or override manually). Auto-split into two tabs on import:
+    - **Parts** — real manufacturer-numbered parts (everything not flagged as bulk).
+    - **Bulk** — pseudo-items whose MFR column starts with `BULK` (propane tanks, consumables, etc).
 - Search across asset #, part #, bin, make/model/serial, description.
 - Filter chips (All / Unchecked / Accounted / Missing / Damaged — labels switch to Match/Short/Over on the Bulk tab).
 - Progress auto-saves per tab in the browser (`localStorage`), so reloads or accidental closes don't wipe your check.
