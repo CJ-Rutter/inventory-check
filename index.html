@@ -35,7 +35,9 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow-x: hidden;  /* iOS Safari: prevent phantom horizontal scroll
+                            from any descendant that briefly overshoots */ }
   body { padding-bottom: env(safe-area-inset-bottom); }
   header {
     position: sticky; top: 0; z-index: 50;
@@ -69,7 +71,9 @@
     border: 1px dashed var(--border); border-radius: 14px; padding: 18px; text-align: center;
     background: var(--panel);
   }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 12px; }
+  /* Auto-flow from 2 columns on narrow phones to 4 on wider screens.
+     Hard 4-up was cramping the labels at < 380px. */
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 0 12px; }
   .stat {
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
     padding: 8px 10px; text-align: center;
@@ -346,13 +350,16 @@
     </div>
     <div class="toolbar">
       <button id="expDownload" class="btn-accent">Download CSV</button>
-      <button id="expEmail">Email…</button>
+      <button id="expShare">Share / Email…</button>
     </div>
     <div id="emailRow" style="display:none; margin-top:10px">
-      <input type="email" id="emailTo" placeholder="recipient@example.com (optional)" />
-      <div class="hint">Opens your mail app with a summary in the body. Attach the downloaded CSV manually if needed (mobile mail can't attach from a webpage).</div>
+      <div class="hint" id="shareHint">
+        Opens the share sheet with the CSV attached (Mail, Messages, Drive, etc.). If your browser
+        can't attach files directly, it downloads the CSV first and opens your email with a summary.
+      </div>
+      <input type="email" id="emailTo" placeholder="recipient@example.com (optional, used by fallback)" />
       <div class="toolbar" style="margin-top:8px">
-        <button id="emailGo" class="btn-accent">Open Email</button>
+        <button id="emailGo" class="btn-accent">Share</button>
         <button id="emailCancel" class="btn-ghost">Back</button>
       </div>
     </div>
@@ -396,7 +403,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.2.1";
+const APP_VERSION = "1.3.0";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -584,7 +591,7 @@ function ingestCSV(text, fileName) {
   if (!kind) return alert("Couldn't tell if this is an Assets or Bulk CSV. Expected 'Asset ID' or 'PART #' column.");
 
   const tab = state.tabs[kind];
-  // Preserve prior status by id
+  // Preserve prior status by id (when re-loading the same file in the same browser session)
   const prior = new Map();
   if (tab.rows.length && tab.cols.id) {
     for (const r of tab.rows) {
@@ -593,22 +600,47 @@ function ingestCSV(text, fileName) {
     }
   }
 
+  // Look for round-trip columns from a prior export. These let a coworker
+  // continue a check started elsewhere: export the in-progress CSV, hand it
+  // off, the next person imports and picks up exactly where it was left.
+  const checkStatusCol = findCol(headers, ["Check Status"]);
+  const checkNoteCol   = findCol(headers, ["Check Note"]);
+  const countedCol     = findCol(headers, ["Counted Qty"]);
+  const isBulk = kind === "bulk";
+  const decodeStatus = (raw) => {
+    const s = String(raw || "").trim().toLowerCase();
+    if (s === "accounted" || s === "match") return "ok";
+    if (s === "missing"   || s === "short") return "bad";
+    if (s === "damaged"   || s === "over")  return "warn";
+    return "";
+  };
+
   tab.headers = headers;
   tab.fileName = fileName || (kind === "assets" ? "assets.csv" : "bulk.csv");
   tab.rows = body.map(arr => {
     const o = {};
     headers.forEach((h, i) => o[h] = arr[i] ?? "");
-    o._status = ""; o._note = "";
-    if (kind === "bulk") o._counted = "";
+    o._status = checkStatusCol ? decodeStatus(o[checkStatusCol]) : "";
+    o._note   = checkNoteCol ? String(o[checkNoteCol] || "") : "";
+    if (isBulk) {
+      // Counted Qty from a prior export wins over the resident-state import.
+      o._counted = countedCol ? String(o[countedCol] ?? "").trim() : "";
+    }
     return o;
   });
   tab.cols = kind === "assets" ? detectAssetsCols(headers) : detectBulkCols(headers);
 
+  // Carry forward any in-browser-session prior state for rows the export
+  // didn't decide on (e.g. importing the original source after a partial
+  // session — preserves what was done before the swap).
   if (prior.size && tab.cols.id) {
     for (const r of tab.rows) {
       const k = String(r[tab.cols.id] ?? "").trim();
       const p = prior.get(k);
-      if (p) { r._status = p._status; r._note = p._note; if (kind === "bulk") r._counted = p._counted; }
+      if (!p) continue;
+      if (!r._status) r._status = p._status;
+      if (!r._note)   r._note   = p._note;
+      if (isBulk && r._counted === "") r._counted = p._counted;
     }
   }
 
@@ -797,6 +829,19 @@ function renderTabCounts() {
   $("#tabCountA").textContent = state.tabs.assets.rows.length || 0;
   $("#tabCountB").textContent = state.tabs.bulk.rows.length || 0;
   $$(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === state.active));
+  // Mobile keyboard hint: assets are typically all-digit, so open the numeric
+  // pad. Bulk part numbers can include letters, so the text keyboard stays.
+  // Users can still tap to a letter on numeric mode via long-press.
+  const search = $("#search");
+  if (search) {
+    if (state.active === "assets") {
+      search.setAttribute("inputmode", "numeric");
+      search.setAttribute("pattern", "[0-9]*");
+    } else {
+      search.setAttribute("inputmode", "search");
+      search.removeAttribute("pattern");
+    }
+  }
 }
 
 function render() {
@@ -861,9 +906,21 @@ function renderAssetCard(r, cols) {
   card.addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-act]"); if (!b) return;
     const next = b.dataset.act;
+    const wasSetting = r._status !== next;  // false when toggling off the same status
     r._status = (r._status === next) ? "" : next;
     save();
-    updateCardInPlace(card, r, "assets", cols, id);
+    // Assets workflow: searching for a specific asset → marking status →
+    // search clears so the next asset can be looked up without manual reset.
+    // Only when the search is actually filtering AND we're setting (not
+    // toggling off) — toggling off is a correction, doesn't deserve reset.
+    if (wasSetting && state.search) {
+      state.search = "";
+      $("#search").value = "";
+      render();
+      $("#search").focus();
+    } else {
+      updateCardInPlace(card, r, "assets", cols, id);
+    }
   });
   card.querySelector("textarea").addEventListener("input", (ev) => { r._note = ev.target.value; save(); });
   return card;
@@ -1104,11 +1161,63 @@ function resolveExportTabs() {
   if (t === "both") return ["assets","bulk"].filter(k => state.tabs[k].rows.length);
   return [t];
 }
-function openEmail(to) {
+function buildExportFiles(scope) {
+  const tabs = resolveExportTabs();
+  const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 16);
+  const files = [];
+  for (const k of tabs) {
+    if (!state.tabs[k].rows.length) continue;
+    const csv = buildCSVFor(k, scope);
+    files.push(new File([csv], `inventory-${k}-${scope}-${stamp}.csv`, { type: "text/csv" }));
+  }
+  return files;
+}
+
+async function shareExport(to) {
   const tabs = resolveExportTabs();
   const subject = `Inventory check — ${tabs.map(t => state.tabs[t].fileName || t).join(" + ")}`;
   const body = tabs.map(buildSummary).join("\n\n");
-  const href = `mailto:${encodeURIComponent(to||"")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const scope = $("#expScope").value;
+  const files = buildExportFiles(scope);
+
+  // Preferred path on iOS / Android: native share sheet with the CSV(s)
+  // attached. The user picks Mail / Messages / Drive / etc. — the recipient
+  // gets the file as a real attachment they can re-import.
+  if (
+    files.length &&
+    typeof navigator !== "undefined" &&
+    typeof navigator.canShare === "function" &&
+    typeof navigator.share === "function" &&
+    navigator.canShare({ files })
+  ) {
+    try {
+      await navigator.share({ title: subject, text: body, files });
+      return;
+    } catch (e) {
+      // User cancelled the share sheet — silent. Anything else, fall through
+      // to the download + mailto fallback below.
+      if (e && e.name === "AbortError") return;
+      console.warn("Web Share failed, falling back to download + mailto:", e);
+    }
+  }
+
+  // Fallback for browsers without Web Share file support (most desktops, some
+  // older mobile builds). Download the CSV first so the user has the file in
+  // hand, then open mailto with the summary in the body.
+  for (const f of files) {
+    const url = URL.createObjectURL(f);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = f.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+  const note = files.length
+    ? "\n\n(CSV downloaded — attach the file manually before sending.)"
+    : "";
+  const href = `mailto:${encodeURIComponent(to || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + note)}`;
   window.location.href = href;
 }
 
@@ -1125,9 +1234,9 @@ $("#expDownload").addEventListener("click", () => {
     downloadOne(k, scope);
   }
 });
-$("#expEmail").addEventListener("click", () => { $("#emailRow").style.display = ""; });
+$("#expShare").addEventListener("click", () => { $("#emailRow").style.display = ""; });
 $("#emailCancel").addEventListener("click", () => { $("#emailRow").style.display = "none"; });
-$("#emailGo").addEventListener("click", () => openEmail($("#emailTo").value.trim()));
+$("#emailGo").addEventListener("click", () => shareExport($("#emailTo").value.trim()));
 
 // ---------- Confirm modal ----------
 let confirmFn = null;
