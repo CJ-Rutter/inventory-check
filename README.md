@@ -2,7 +2,7 @@
 
 Mobile-friendly single-page web app for running rental yard inventory checks from a phone or tablet.
 
-**Version:** v1.5.0
+**Version:** v1.6.0
 **Created by:** CJ Rutter
 
 ## What it does
@@ -17,6 +17,7 @@ Mobile-friendly single-page web app for running rental yard inventory checks fro
 - Progress auto-saves per tab in the browser (`localStorage`), so reloads or accidental closes don't wipe your check.
 - Export:
   - Download CSV (active tab, both tabs, or filtered scopes like "Exceptions").
+  - Filenames are `<type>[-<scope>]-<YYYY-MM-DD-HHMM>.csv` (e.g. `assets-2026-06-17-1430.csv`; the scope segment is dropped for full exports) — short and timestamped so multiple partials stay distinct when merged in Inventory Manager.
   - Email summary via `mailto:` (opens device mail app with a short summary in the body).
 - Feedback button sends comments to cj.rutter@equipmentshare.com with app version + device info appended.
 

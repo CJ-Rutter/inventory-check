@@ -552,7 +552,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.6.0";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -1382,10 +1382,20 @@ function buildSummary(kind) {
   if (warns.length){ lines.push(""); lines.push(`${isBulk?"OVER":"DAMAGED"}:`); for (const r of warns) lines.push(fmt(r)); }
   return lines.join("\n");
 }
+// Export filename: <kind>[-<scope>]-<YYYY-MM-DD-HHMM>.csv (local time). The scope
+// segment is dropped for full ("all") exports. Kept short + distinct so multiple
+// partials merged in Inventory Manager read clearly by filename.
+function exportStamp() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+function exportName(kind, scope) {
+  const scopePart = (scope && scope !== "all") ? `-${scope}` : "";
+  return `${kind}${scopePart}-${exportStamp()}.csv`;
+}
 function downloadOne(kind, scope) {
   const csv = buildCSVFor(kind, scope);
-  const stamp = new Date().toISOString().replace(/[:T]/g,"-").slice(0,16);
-  const name = `inventory-${kind}-${scope}-${stamp}.csv`;
+  const name = exportName(kind, scope);
   const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1401,12 +1411,11 @@ function resolveExportTabs() {
 }
 function buildExportFiles(scope) {
   const tabs = resolveExportTabs();
-  const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 16);
   const files = [];
   for (const k of tabs) {
     if (!state.tabs[k].rows.length) continue;
     const csv = buildCSVFor(k, scope);
-    files.push(new File([csv], `inventory-${k}-${scope}-${stamp}.csv`, { type: "text/csv" }));
+    files.push(new File([csv], exportName(k, scope), { type: "text/csv" }));
   }
   return files;
 }
@@ -1583,7 +1592,7 @@ async function checkForUpdate() {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) return;
     const html = await res.text();
-    // Match the APP_VERSION literal in the script source: const APP_VERSION = "1.2.3";
+    // Pull the live APP_VERSION literal out of the fetched HTML to compare with ours.
     const match = html.match(/const\s+APP_VERSION\s*=\s*["'](\d+\.\d+\.\d+)["']/);
     if (!match) return;
     const liveVersion = match[1];
