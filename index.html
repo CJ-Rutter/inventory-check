@@ -988,6 +988,9 @@ function sortRows(rows, kind, cols) {
 function renderFilters() {
   const kind = state.active;
   const isBulk = isBulkLike(kind);
+  // Assets have no "Unchecked" state anymore (untouched = Missing); migrate any
+  // stale saved filter so nothing renders an empty list.
+  if (kind === "assets" && (state.filter[kind] || "all") === "unchecked") state.filter[kind] = "all";
   const opts = [
     ["all", "All"],
     ["unchecked", "Unchecked"],
@@ -995,7 +998,7 @@ function renderFilters() {
     ["bad", isBulk ? "Short" : "Missing"],
     ["warn", isBulk ? "Over" : "Damaged"],
     ["onrent", "On Rent"],
-  ];
+  ].filter(([f]) => !(kind === "assets" && f === "unchecked"));
   const active = state.filter[kind] || "all";
   $("#filters").innerHTML = opts.map(([f,label]) =>
     `<div class="chip ${f===active?"active":""}" data-f="${f}">${label}</div>`
@@ -1278,11 +1281,16 @@ $("#btnJump").addEventListener("click", () => {
   const tab = state.tabs[state.active];
   const cols = tab.cols;
   const vis = visibleRows();
-  const target = vis.find(r => !effectiveStatus(r, state.active, cols))
-              || tab.rows.find(r => !effectiveStatus(r, state.active, cols));
+  // Assets: "next to review" = next Missing row (no unchecked state).
+  // Parts/Bulk: next row with no status yet.
+  const isAssets = state.active === "assets";
+  const isTarget = (r) => isAssets
+    ? effectiveStatus(r, "assets", cols) === "bad"
+    : !effectiveStatus(r, state.active, cols);
+  const target = vis.find(isTarget) || tab.rows.find(isTarget);
   if (!target) { alert("Nothing left to check."); return; }
   const id = String(target[cols.id] ?? "");
-  state.filter[state.active] = "unchecked";
+  state.filter[state.active] = isAssets ? "bad" : "unchecked";
   state.search = ""; $("#search").value = "";
   save(); render();
   const card = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
@@ -1366,7 +1374,8 @@ function buildSummary(kind) {
   const titleByKind = { assets: "Assets", parts: "Parts", bulk: "Bulk" };
   const lines = [];
   lines.push(`${titleByKind[kind] || kind} — ${tab.fileName}`);
-  lines.push(`Total: ${tab.rows.length} | ${isBulk?"Match":"Accounted"}: ${ok} | ${isBulk?"Short":"Missing"}: ${bad} | ${isBulk?"Over":"Damaged"}: ${warn} | Unchecked: ${tab.rows.length - ok - bad - warn}`);
+  const uncPart = isBulk ? ` | Unchecked: ${tab.rows.length - ok - bad - warn}` : "";
+  lines.push(`Total: ${tab.rows.length} | ${isBulk?"Match":"Accounted"}: ${ok} | ${isBulk?"Short":"Missing"}: ${bad} | ${isBulk?"Over":"Damaged"}: ${warn}${uncPart}`);
   const fmt = (r) => {
     const id = r[cols.id] ?? "";
     if (isBulk) {
