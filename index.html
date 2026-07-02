@@ -389,7 +389,7 @@
 <main>
   <div id="empty" class="empty">
     <p style="margin:.2em 0 1em">Load your inventory CSV to begin. The app auto-detects assets vs bulk by columns.</p>
-    <input type="file" id="file" accept=".csv,text/csv" />
+    <input type="file" id="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
     <p class="hint">
       <b>Assets</b> CSV: expects <b>Asset ID</b> + <b>Equipment Class</b>.<br>
       <b>Bulk Inventory</b> CSV: expects <b>PART #</b> + <b>BIN LOCATION</b>. Auto-split into
@@ -989,12 +989,14 @@ function parseXlsxGrid(buf) {
 }
 // ---------- Load CSV ----------
 function ingestCSV(text, fileName) {
-  const grid = parseCSV(text);
-  if (!grid.length) return alert("CSV appears empty.");
+  ingestGrid(parseCSV(text), fileName);
+}
+function ingestGrid(grid, fileName) {
+  if (!grid.length) return alert("File appears empty.");
   const headers = grid[0].map((h, i) => h && h.trim() ? h.trim() : `col_${i}`);
   const body = grid.slice(1);
   const kind = classifyCSV(headers);
-  if (!kind) return alert("Couldn't tell if this is an Assets or Bulk CSV. Expected 'Asset ID' or 'PART #' column.");
+  if (!kind) return alert("Couldn't tell if this is an Assets or Bulk file. Expected 'Asset ID' or 'PART #' column.");
 
   // Round-trip columns from a prior export. These let a coworker continue a
   // check started elsewhere: export the in-progress CSV, hand it off, the
@@ -1456,9 +1458,24 @@ function escapeHtml(s) {
 // ---------- Events ----------
 $("#file").addEventListener("change", (ev) => {
   const f = ev.target.files?.[0]; if (!f) return;
+  const isXlsx = /\.xlsx$/i.test(f.name);
   const fr = new FileReader();
-  fr.onload = () => { ingestCSV(String(fr.result || ""), f.name); ev.target.value = ""; };
-  fr.readAsText(f);
+  fr.onerror = () => { alert(`${f.name}: couldn't read this file.`); ev.target.value = ""; };
+  fr.onload = () => {
+    try {
+      if (isXlsx) ingestGrid(parseXlsxGrid(fr.result), f.name);
+      else ingestGrid(parseCSV(String(fr.result || "")), f.name);
+    } catch (e) {
+      if (e && e.message === "XLSX_UNSUPPORTED") {
+        alert(`${f.name}: this .xlsx looks re-saved by another app. Please export a fresh file from Inventory Manager or Inventory Check.`);
+      } else {
+        alert(`${f.name}: couldn't read this file.`);
+      }
+    }
+    ev.target.value = "";
+  };
+  if (isXlsx) fr.readAsArrayBuffer(f);
+  else fr.readAsText(f);
 });
 $("#btnLoad").addEventListener("click", () => $("#file").click());
 $("#search").addEventListener("input", (e) => { state.search = e.target.value; render(); });
