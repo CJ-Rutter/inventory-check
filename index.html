@@ -565,7 +565,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.8.1";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -1384,6 +1384,7 @@ function renderAssetCard(r, cols) {
       $("#search").focus();
     } else {
       updateCardInPlace(card, r, "assets", cols, id);
+      dropCardIfHidden(card, r);
     }
   });
   card.querySelector("textarea").addEventListener("input", (ev) => { r._note = ev.target.value; save(); });
@@ -1432,6 +1433,7 @@ function renderBulkCard(r, cols) {
     r._status = (r._status === next) ? "" : next;
     save();
     updateCardInPlace(card, r, "bulk", cols, id);
+    dropCardIfHidden(card, r);
   });
   card.querySelector('input[type=number]').addEventListener("input", (ev) => {
     r._counted = ev.target.value;
@@ -1462,6 +1464,16 @@ function updateCardInPlace(card, r, kind, cols, id) {
     b.classList.toggle("dim", !!manual && manual !== act);
   });
   renderStats();
+}
+
+// After an in-place status change from a status button, drop the card if the
+// active filter no longer includes this row — so a filtered view (e.g. "Missing
+// only") updates live instead of leaving the just-changed item on screen.
+// Not called from the count input (would yank focus mid-typing).
+function dropCardIfHidden(card, r) {
+  if (visibleRows().includes(r)) return;   // still belongs in the current view
+  card.remove();
+  if (!$("#list").querySelector(".card")) render();  // nothing left → "No items match."
 }
 
 function escapeHtml(s) {
