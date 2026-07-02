@@ -661,6 +661,7 @@ function detectAssetsCols(headers) {
     desc:    findCol(headers, ["Description"]),
     src:     findCol(headers, ["Inventory Status", "Status"]),
     lastOff: findCol(headers, ["Last Off Rent Date", "Off Rent Date"]),
+    market:  findCol(headers, ["Market", "Branch"]),
   };
 }
 function detectBulkCols(headers) {
