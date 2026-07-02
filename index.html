@@ -1001,13 +1001,15 @@ function ingestGrid(grid, fileName) {
   // Round-trip columns from a prior export. These let a coworker continue a
   // check started elsewhere: export the in-progress CSV, hand it off, the
   // next person imports and picks up exactly where it was left.
-  const checkStatusCol = findCol(headers, ["Check Status"]);
-  const checkNoteCol   = findCol(headers, ["Check Note"]);
+  // Old export headers first so existing round-trip CSVs bind to them; the new
+  // .xlsx from Inventory Manager uses the short names (Status/Notes/Added).
+  const checkStatusCol = findCol(headers, ["Check Status", "Status"]);
+  const checkNoteCol   = findCol(headers, ["Check Note", "Notes"]);
   const countedCol     = findCol(headers, ["Counted Qty"]);
-  const addedCol       = findCol(headers, ["Added Manually"]);
+  const addedCol       = findCol(headers, ["Added Manually", "Added"]);
   const decodeStatus = (raw) => {
     const s = String(raw || "").trim().toLowerCase();
-    if (s === "accounted" || s === "match") return "ok";
+    if (s === "accounted" || s === "accounted for" || s === "match") return "ok";
     if (s === "missing"   || s === "short") return "bad";
     if (s === "damaged"   || s === "over")  return "warn";
     return "";
