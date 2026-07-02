@@ -1127,8 +1127,7 @@ function renderAssetCard(r, cols) {
       ${ser ? `<div>SN: ${escapeHtml(ser)}</div>` : ""}
     </div>
     <div class="actions">
-      <button class="b-ok ${r._status && r._status!=="ok" ? "dim":""}"  data-act="ok">Accounted</button>
-      <button class="b-bad ${r._status && r._status!=="bad" ? "dim":""}" data-act="bad">Missing</button>
+      <button class="b-ok ${r._status && r._status!=="ok" ? "dim":""}"  data-act="ok">Accounted For</button>
       <button class="b-warn ${r._status && r._status!=="warn" ? "dim":""}" data-act="warn">Damaged</button>
     </div>
     <div class="note"><textarea placeholder="Note (optional)" rows="1">${escapeHtml(r._note || "")}</textarea></div>
