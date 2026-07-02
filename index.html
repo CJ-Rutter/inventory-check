@@ -355,6 +355,17 @@
     border: 1px solid rgba(31,157,85,.45);
     vertical-align: middle;
   }
+  #printArea { display: none; }
+  @media print {
+    body > *:not(#printArea) { display: none !important; }
+    #printArea { display: block !important; }
+    #printArea .print-title { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+    #printArea .print-totals { font-size: 12px; margin-bottom: 10px; }
+    #printArea .print-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    #printArea .print-table th, #printArea .print-table td { border: 1px solid #999; padding: 3px 6px; text-align: left; vertical-align: top; }
+    #printArea .print-table thead { display: table-header-group; }
+    #printArea .print-table tr { page-break-inside: avoid; }
+  }
 </style>
 </head>
 <body>
@@ -367,6 +378,7 @@
     <div class="grow"></div>
     <button class="btn-ghost" id="btnLoad">Load CSV</button>
     <button class="btn-ghost" id="btnExport">Export</button>
+    <button class="btn-ghost" id="btnPrint" title="Print current tab">Print</button>
     <button class="btn-ghost" id="btnFeedback" title="Send feedback to CJ">Feedback</button>
     <button class="btn-ghost" id="btnReset" title="Clear all check marks">Reset</button>
   </div>
@@ -549,6 +561,7 @@
   </div>
 </div>
 
+<div id="printArea"></div>
 <script>
 "use strict";
 
@@ -1458,6 +1471,48 @@ function escapeHtml(s) {
 }
 
 // ---------- Events ----------
+function renderPrintArea() {
+  const kind = state.active;
+  const tab = state.tabs[kind];
+  const cols = tab.cols;
+  const isBulk = isBulkLike(kind);
+  const titleByKind = { assets: "Assets", parts: "Parts", bulk: "Bulk" };
+  let ok = 0, bad = 0, warn = 0;
+  for (const r of tab.rows) {
+    const s = effectiveStatus(r, kind, cols);
+    if (s === "ok") ok++; else if (s === "bad") bad++; else if (s === "warn") warn++;
+  }
+  const totals = isBulk
+    ? `Total: ${tab.rows.length} · Match: ${ok} · Short: ${bad} · Over: ${warn}`
+    : `Total: ${tab.rows.length} · Accounted: ${ok} · Missing: ${bad} · Damaged: ${warn}`;
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const headCols = isBulk
+    ? ["Part #", "Bin", "Description", "Count", "Status", "Note"]
+    : ["Asset ID", "Cat Class", "Make/Model", "Status", "Note"];
+  const rowsHtml = tab.rows.map((r) => {
+    const label = statusLabel(effectiveStatus(r, kind, cols), isBulk);
+    let cells;
+    if (isBulk) {
+      const count = `${r._counted ?? ""}/${r[cols.avail] ?? ""}`;
+      cells = [r[cols.id], r[cols.bin], r[cols.desc], count, label, r._note || ""];
+    } else {
+      const mm = [r[cols.make], r[cols.model]].filter(Boolean).join(" ");
+      cells = [r[cols.id], r[cols.cat], mm, label, r._note || ""];
+    }
+    return `<tr>${cells.map((c) => `<td>${escapeHtml(String(c ?? ""))}</td>`).join("")}</tr>`;
+  }).join("");
+  $("#printArea").innerHTML =
+    `<div class="print-title">Inventory Check · ${escapeHtml(titleByKind[kind] || kind)} · ${escapeHtml(tab.fileName || "")} · ${date}</div>` +
+    `<div class="print-totals">${escapeHtml(totals)}</div>` +
+    `<table class="print-table"><thead><tr>${headCols.map((h) => `<th>${h}</th>`).join("")}</tr></thead>` +
+    `<tbody>${rowsHtml}</tbody></table>`;
+}
+$("#btnPrint").addEventListener("click", () => {
+  if (!state.tabs[state.active].rows.length) return alert("Load a CSV first.");
+  renderPrintArea();
+  window.print();
+});
 $("#file").addEventListener("change", (ev) => {
   const f = ev.target.files?.[0]; if (!f) return;
   const isXlsx = /\.xlsx$/i.test(f.name);
