@@ -439,7 +439,7 @@
       </select>
     </div>
     <div class="toolbar">
-      <button id="expDownload" class="btn-accent">Download CSV</button>
+      <button id="expDownload" class="btn-accent">Download</button>
       <button id="expShare">Share / Email…</button>
     </div>
     <div id="emailRow" style="display:none; margin-top:10px">
@@ -1528,12 +1528,14 @@ function exportStamp() {
 }
 function exportName(kind, scope) {
   const scopePart = (scope && scope !== "all") ? `-${scope}` : "";
-  return `${kind}${scopePart}-${exportStamp()}.csv`;
+  const ext = kind === "assets" ? "xlsx" : "csv";
+  return `${kind}${scopePart}-${exportStamp()}.${ext}`;
 }
 function downloadOne(kind, scope) {
-  const csv = buildCSVFor(kind, scope);
   const name = exportName(kind, scope);
-  const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
+  const blob = kind === "assets"
+    ? buildAssetsXlsx(scope)
+    : new Blob([buildCSVFor(kind, scope)], {type: "text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = name;
@@ -1551,8 +1553,12 @@ function buildExportFiles(scope) {
   const files = [];
   for (const k of tabs) {
     if (!state.tabs[k].rows.length) continue;
-    const csv = buildCSVFor(k, scope);
-    files.push(new File([csv], exportName(k, scope), { type: "text/csv" }));
+    if (k === "assets") {
+      files.push(new File([buildAssetsXlsx(scope)], exportName(k, scope),
+        { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    } else {
+      files.push(new File([buildCSVFor(k, scope)], exportName(k, scope), { type: "text/csv" }));
+    }
   }
   return files;
 }
@@ -1607,6 +1613,12 @@ async function shareExport(to) {
 
 $("#btnExport").addEventListener("click", () => {
   if (!ALL_TABS.some(t => state.tabs[t].rows.length)) return alert("Load a CSV first.");
+  // Assets have no Unchecked state — hide that scope, and reset it if selected.
+  const uncheckedOpt = document.querySelector('#expScope option[value="unchecked"]');
+  if (uncheckedOpt) {
+    uncheckedOpt.hidden = (state.active === "assets");
+    if (uncheckedOpt.hidden && $("#expScope").value === "unchecked") $("#expScope").value = "all";
+  }
   $("#exportModal").classList.add("show");
 });
 $("#expClose").addEventListener("click", () => $("#exportModal").classList.remove("show"));
