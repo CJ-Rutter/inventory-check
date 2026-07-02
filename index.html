@@ -901,7 +901,7 @@ function statusBadge(s, isBulk) {
 
 function effectiveStatus(r, kind, cols) {
   if (isBulkLike(kind)) return bulkDerivedStatus(r, cols);
-  return r._status || "";
+  return r._status || "bad";   // assets: unaccounted defaults to Missing
 }
 
 function visibleRows() {
@@ -1119,7 +1119,7 @@ function renderAssetCard(r, cols) {
   card.dataset.id = id;
   const addedTag = r._added ? `<span class="added-tag">+ Added</span>` : "";
   card.innerHTML = `
-    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(r._status, false)}${rentBadge}${addedTag}</div>
+    <div><span class="asset-id">${escapeHtml(id) || "—"}</span>${statusBadge(effectiveStatus(r, "assets", cols), false)}${rentBadge}${addedTag}</div>
     <div class="catclass">${escapeHtml(cat) || "—"}</div>
     ${invStatus ? `<div class="status-line">Status: ${escapeHtml(invStatus)}</div>` : ""}
     <div class="meta">
@@ -1211,7 +1211,7 @@ function renderBulkCard(r, cols) {
 
 function updateCardInPlace(card, r, kind, cols, id) {
   const isBulk = isBulkLike(kind);
-  const status = isBulk ? effectiveStatus(r, kind, cols) : r._status;
+  const status = effectiveStatus(r, kind, cols);
   const onRent = isOnRent(r, kind, cols);
   let rentBadge = "";
   if (onRent) {
