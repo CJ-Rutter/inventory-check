@@ -1001,9 +1001,6 @@ function parseXlsxGrid(buf) {
   return grid;
 }
 // ---------- Load CSV ----------
-function ingestCSV(text, fileName) {
-  ingestGrid(parseCSV(text), fileName);
-}
 function ingestGrid(grid, fileName) {
   if (!grid.length) return alert("File appears empty.");
   const headers = grid[0].map((h, i) => h && h.trim() ? h.trim() : `col_${i}`);
@@ -1014,12 +1011,15 @@ function ingestGrid(grid, fileName) {
   // Round-trip columns from a prior export. These let a coworker continue a
   // check started elsewhere: export the in-progress CSV, hand it off, the
   // next person imports and picks up exactly where it was left.
-  // Old export headers first so existing round-trip CSVs bind to them; the new
-  // .xlsx from Inventory Manager uses the short names (Status/Notes/Added).
-  const checkStatusCol = findCol(headers, ["Check Status", "Status"]);
-  const checkNoteCol   = findCol(headers, ["Check Note", "Notes"]);
+  // Old export headers via findCol (safe). The new .xlsx uses the short names
+  // (Status/Notes/Added) — bind those by EXACT match only, because findCol's
+  // substring fallback would otherwise grab a fresh CSV's "Inventory Status"
+  // column and wrongly pre-set statuses before any check.
+  const exactCol = (name) => { const i = headers.map(norm).indexOf(norm(name)); return i >= 0 ? headers[i] : null; };
+  const checkStatusCol = findCol(headers, ["Check Status"]) || exactCol("Status");
+  const checkNoteCol   = findCol(headers, ["Check Note"])   || exactCol("Notes");
   const countedCol     = findCol(headers, ["Counted Qty"]);
-  const addedCol       = findCol(headers, ["Added Manually", "Added"]);
+  const addedCol       = findCol(headers, ["Added Manually"]) || exactCol("Added");
   const decodeStatus = (raw) => {
     const s = String(raw || "").trim().toLowerCase();
     if (s === "accounted" || s === "accounted for" || s === "match") return "ok";
