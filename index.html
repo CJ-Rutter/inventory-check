@@ -691,6 +691,78 @@ function zipStore(files) {
   return concatBytes([...locals, centralBytes, end]);
 }
 
+// ---------- .xlsx OOXML parts + Assets sheet builder ----------
+const XLSX_CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
+const XLSX_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+const XLSX_WORKBOOK = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Assets" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+const XLSX_WORKBOOK_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+// Style indices: 1=header(gray,bold) 2=green 3=yellow 4=red 5=orange.
+// fills 0/1 are reserved by the spec (none, gray125); custom fills start at 2.
+const XLSX_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="7"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD9D9D9"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFA9D08E"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFD966"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE06666"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF6B26B"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="4" borderId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="5" borderId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="6" borderId="0" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+
+function xmlEsc(s) {
+  return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+function colLetter(i) {           // 0-based column index → A, B, … Z, AA, …
+  let s = "", n = i + 1;
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+function xlsxCell(colIdx, rowNum, text, styleIdx) {
+  const s = styleIdx ? ` s="${styleIdx}"` : "";
+  return `<c r="${colLetter(colIdx)}${rowNum}"${s} t="inlineStr"><is><t xml:space="preserve">${xmlEsc(text)}</t></is></c>`;
+}
+// Row fill precedence: added=orange(5) > damaged=red(4) > accounted=green(2) > missing=yellow(3)
+function assetRowStyle(r) {
+  if (r._added) return 5;
+  const s = r._status || "bad";
+  if (s === "warn") return 4;
+  if (s === "ok") return 2;
+  return 3;
+}
+function assetStatusText(s) {
+  if (s === "ok") return "Accounted For";
+  if (s === "warn") return "Damaged";
+  return "Missing";
+}
+function buildAssetsXlsx(scope) {
+  const cols = state.tabs.assets.cols;
+  const headers = ["Asset ID","Cat Class","S/N","Make","Model","Market/Branch","Status","Added","Notes"];
+  const dataRows = filterRowsForExport("assets", scope);
+  const xmlRows = [];
+  xmlRows.push(`<row r="1">` + headers.map((h,i) => xlsxCell(i, 1, h, 1)).join("") + `</row>`);
+  dataRows.forEach((r, idx) => {
+    const rowNum = idx + 2;
+    const st = r._status || "bad";
+    const vals = [
+      r[cols.id], r[cols.cat], r[cols.ser], r[cols.make], r[cols.model],
+      cols.market ? r[cols.market] : "",
+      assetStatusText(st),
+      r._added ? "Yes" : "",
+      r._note || "",
+    ];
+    const sIdx = assetRowStyle(r);
+    xmlRows.push(`<row r="${rowNum}">` + vals.map((v,i) => xlsxCell(i, rowNum, String(v ?? ""), sIdx)).join("") + `</row>`);
+  });
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${xmlRows.join("")}</sheetData></worksheet>`;
+  const enc = (s) => new TextEncoder().encode(s);
+  const files = [
+    { name: "[Content_Types].xml",        data: enc(XLSX_CONTENT_TYPES) },
+    { name: "_rels/.rels",                data: enc(XLSX_RELS) },
+    { name: "xl/workbook.xml",            data: enc(XLSX_WORKBOOK) },
+    { name: "xl/_rels/workbook.xml.rels", data: enc(XLSX_WORKBOOK_RELS) },
+    { name: "xl/styles.xml",              data: enc(XLSX_STYLES) },
+    { name: "xl/worksheets/sheet1.xml",   data: enc(sheet) },
+  ];
+  return new Blob([zipStore(files)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
 // ---------- Column detection ----------
 const norm = s => String(s||"").toLowerCase().replace(/[^a-z0-9]/g, "");
 function findCol(headers, candidates) {
