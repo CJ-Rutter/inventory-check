@@ -635,6 +635,62 @@ function toCSV(headers, rows) {
   return lines.join("\r\n");
 }
 
+// ---------- Minimal .xlsx writer: CRC-32 + store-only ZIP (no deps) ----------
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function concatBytes(parts) {
+  let len = 0;
+  for (const p of parts) len += p.length;
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+// files: [{ name, data: Uint8Array }] → Uint8Array of a store-only (method 0) zip.
+function zipStore(files) {
+  const enc = new TextEncoder();
+  const u16 = (n) => new Uint8Array([n & 255, (n >>> 8) & 255]);
+  const u32 = (n) => new Uint8Array([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]);
+  const locals = [];
+  const central = [];
+  let offset = 0;
+  for (const f of files) {
+    const nameBytes = enc.encode(f.name);
+    const crc = crc32(f.data);
+    const size = f.data.length;
+    const local = concatBytes([
+      u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(size), u32(size), u16(nameBytes.length), u16(0),
+      nameBytes, f.data,
+    ]);
+    locals.push(local);
+    central.push(concatBytes([
+      u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(size), u32(size), u16(nameBytes.length),
+      u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), nameBytes,
+    ]));
+    offset += local.length;
+  }
+  const centralBytes = concatBytes(central);
+  const end = concatBytes([
+    u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length),
+    u32(centralBytes.length), u32(offset), u16(0),
+  ]);
+  return concatBytes([...locals, centralBytes, end]);
+}
+
 // ---------- Column detection ----------
 const norm = s => String(s||"").toLowerCase().replace(/[^a-z0-9]/g, "");
 function findCol(headers, candidates) {
