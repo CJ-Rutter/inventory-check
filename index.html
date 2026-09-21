@@ -565,7 +565,7 @@
 <script>
 "use strict";
 
-const APP_VERSION = "1.8.1";
+const APP_VERSION = "1.8.2";
 const FEEDBACK_EMAIL = "cj.rutter@equipmentshare.com";
 const LS_KEY = "inv-check-v2";
 
@@ -588,6 +588,21 @@ const state = {
 // "is this tab one of the bulk-shaped ones?" check used by renderers and
 // status logic.
 const isBulkLike = (kind) => kind === "bulk" || kind === "parts";
+
+// Stable per-row key for matching the same physical item across imports.
+// Mirrors Inventory Manager's rowKey so both apps agree on what identifies a
+// row. Assets are identified by Asset ID alone, but a parts/bulk row is a part
+// IN A BIN — the same Part # legitimately sits in more than one bin, so keying
+// on Part # alone would carry one bin's count and note onto every other bin
+// holding that part. "" = keyless (an added row with no id).
+function rowKey(kind, r, cols) {
+  const id = String((cols.id ? r[cols.id] : "") ?? "").trim().toLowerCase();
+  if (!isBulkLike(kind)) return id;
+  if (!id) return "";
+  const bin = String((cols.bin ? r[cols.bin] : "") ?? "").trim().toLowerCase();
+  return `${id}␟${bin}`; // ␟ unit separator
+}
+
 const BULK_LIKE_TABS = ["parts", "bulk"];
 const ALL_TABS = ["assets", "parts", "bulk"];
 
@@ -1080,14 +1095,19 @@ function ingestGrid(grid, fileName) {
 }
 
 // Apply a parsed/enriched row set to a tab, preserving any in-session status
-// the user had on rows whose id matches (so re-loading the same CSV mid-check
-// doesn't wipe progress).
+// the user had on rows whose key matches (so re-loading the same CSV mid-check
+// doesn't wipe progress). Matching is by rowKey, so a parts/bulk row only
+// inherits from the same Part # in the SAME bin; a part that has moved bins
+// reads as a new location and needs a fresh count.
 function applyImport(kind, headers, rows, fileName, cols) {
   const tab = state.tabs[kind];
   const prior = new Map();
-  if (tab.rows.length && tab.cols.id) {
+  // Old rows are keyed with the columns they were imported under; the incoming
+  // rows are keyed with the new ones, which may spell the same fields differently.
+  const priorCols = tab.cols;
+  if (tab.rows.length && priorCols.id) {
     for (const r of tab.rows) {
-      const k = String(r[tab.cols.id] ?? "").trim();
+      const k = rowKey(kind, r, priorCols);
       if (k) prior.set(k, { _status: r._status || "", _note: r._note || "", _counted: r._counted ?? "" });
     }
   }
@@ -1097,7 +1117,7 @@ function applyImport(kind, headers, rows, fileName, cols) {
   tab.cols = cols;
   if (prior.size && tab.cols.id) {
     for (const r of tab.rows) {
-      const k = String(r[tab.cols.id] ?? "").trim();
+      const k = rowKey(kind, r, tab.cols);
       const p = prior.get(k);
       if (!p) continue;
       if (!r._status) r._status = p._status;
@@ -2036,15 +2056,23 @@ function commitAdd() {
   } else {
     const id = $("#addPartId").value.trim();
     if (!id) { alert("Part # is required."); return; }
-    if (tab.rows.some(r => String(r[cols.id] ?? "").trim() === id)) {
-      if (!confirm(`Part ${id} is already in this tab. Add another row anyway?`)) return;
+    const bin = $("#addPartBin").value.trim();
+    // Same part in a different bin is a legitimate second row, so the warning
+    // compares bin-aware keys rather than Part # alone.
+    const probe = {};
+    if (cols.id)  probe[cols.id]  = id;
+    if (cols.bin) probe[cols.bin] = bin;
+    const newKey = rowKey(kind, probe, cols);
+    if (newKey && tab.rows.some(r => rowKey(kind, r, cols) === newKey)) {
+      const where = bin ? ` in bin ${bin}` : "";
+      if (!confirm(`Part ${id}${where} is already in this tab. Add another row anyway?`)) return;
     }
     const avail = $("#addPartAvail").value.trim() || "0";
     const counted = $("#addPartCounted").value.trim();
     const row = {};
     for (const h of tab.headers) row[h] = "";
     if (cols.id)    row[cols.id]    = id;
-    if (cols.bin)   row[cols.bin]   = $("#addPartBin").value.trim();
+    if (cols.bin)   row[cols.bin]   = bin;
     if (cols.mfr)   row[cols.mfr]   = $("#addPartMfr").value.trim();
     if (cols.desc)  row[cols.desc]  = $("#addPartDesc").value.trim();
     if (cols.avail) row[cols.avail] = avail;
